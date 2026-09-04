@@ -15,7 +15,7 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     roc_auc_score,
-    confusion_matrix
+    confusion_matrix,
 )
 
 
@@ -34,13 +34,21 @@ st.write(
     """
     Upload a dataset, select the outcome and predictor variables,
     use cross-validation to select the optimal tree depth,
-    and evaluate the final decision tree.
+    evaluate the final decision tree, and export predictions.
     """
 )
 
 
 # ============================================================
-# HELPER FUNCTION: CALCULATE PERFORMANCE METRICS
+# INITIALIZE SESSION STATE
+# ============================================================
+
+if "model_built" not in st.session_state:
+    st.session_state.model_built = False
+
+
+# ============================================================
+# HELPER FUNCTION: PERFORMANCE METRICS
 # ============================================================
 
 def calculate_metrics(y_true, probabilities, cutoff):
@@ -58,7 +66,7 @@ def calculate_metrics(y_true, probabilities, cutoff):
         predictions
     )
 
-    misclassification = 1 - accuracy
+    misclassification_error = 1 - accuracy
 
     precision = precision_score(
         y_true,
@@ -100,7 +108,7 @@ def calculate_metrics(y_true, probabilities, cutoff):
 
     metrics = {
         "Accuracy": accuracy,
-        "Misclassification Error": misclassification,
+        "Misclassification Error": misclassification_error,
         "Precision": precision,
         "Recall": recall,
         "F1 Score": f1,
@@ -113,7 +121,7 @@ def calculate_metrics(y_true, probabilities, cutoff):
 
 
 # ============================================================
-# HELPER FUNCTION: GET MODEL-SELECTION METRIC
+# HELPER FUNCTION: GET CV METRIC
 # ============================================================
 
 def get_selected_metric(
@@ -121,9 +129,6 @@ def get_selected_metric(
     probabilities,
     metric_name
 ):
-
-    # Cross-validation uses cutoff = 0.50 for
-    # cutoff-dependent metrics.
 
     metrics, _ = calculate_metrics(
         y_true,
@@ -166,7 +171,7 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # 2. SELECT OUTCOME
+    # 2. OUTCOME VARIABLE
     # ========================================================
 
     st.subheader("1. Select Outcome Variable")
@@ -178,7 +183,7 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # 3. SELECT PREDICTORS
+    # 3. PREDICTORS
     # ========================================================
 
     st.subheader("2. Select Predictor Variables")
@@ -211,7 +216,7 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # 5. TREE DEPTH
+    # 5. TREE DEPTH RANGE
     # ========================================================
 
     st.subheader("4. Select Tree Depth Range")
@@ -240,10 +245,37 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # 6. MODEL-SELECTION METRIC
+    # 6. TREE CONSTRAINTS
     # ========================================================
 
-    st.subheader("5. Select Model-Selection Metric")
+    st.subheader("5. Tree Constraints")
+
+    constraint_col1, constraint_col2 = st.columns(2)
+
+    with constraint_col1:
+
+        min_samples_leaf = st.number_input(
+            "Minimum observations in a terminal leaf",
+            min_value=1,
+            value=10,
+            step=1
+        )
+
+    with constraint_col2:
+
+        min_samples_split = st.number_input(
+            "Minimum observations required to split a node",
+            min_value=2,
+            value=20,
+            step=1
+        )
+
+
+    # ========================================================
+    # 7. MODEL-SELECTION METRIC
+    # ========================================================
+
+    st.subheader("6. Select Model-Selection Metric")
 
     metric_name = st.selectbox(
         "Metric used to select the optimal tree depth:",
@@ -285,7 +317,12 @@ if uploaded_file is not None:
     # BUILD MODEL BUTTON
     # ========================================================
 
-    if st.button("Build Decision Tree"):
+    build_model = st.button(
+        "Build Decision Tree"
+    )
+
+
+    if build_model:
 
         # ----------------------------------------------------
         # VALIDATION
@@ -310,6 +347,16 @@ if uploaded_file is not None:
             st.stop()
 
 
+        if min_samples_split < 2:
+
+            st.error(
+                "Minimum observations required to split "
+                "a node must be at least 2."
+            )
+
+            st.stop()
+
+
         y_original = df[target]
 
         valid_rows = y_original.notna()
@@ -318,12 +365,18 @@ if uploaded_file is not None:
             valid_rows
         ].copy()
 
-        X = model_df[predictors].copy()
+        X = model_df[
+            predictors
+        ].copy()
 
-        y = model_df[target].copy()
+        y = model_df[
+            target
+        ].copy()
 
 
-        # Outcome must be exactly 0 and 1
+        # ----------------------------------------------------
+        # OUTCOME MUST BE 0 / 1
+        # ----------------------------------------------------
 
         unique_values = set(
             y.unique()
@@ -359,27 +412,6 @@ if uploaded_file is not None:
             )
         )
 
-
-        st.subheader("Training and Testing Samples")
-
-        split_col1, split_col2 = st.columns(2)
-
-        with split_col1:
-
-            st.metric(
-                "Training Observations",
-                len(X_train)
-            )
-
-        with split_col2:
-
-            st.metric(
-                "Testing Observations",
-                len(X_test)
-            )
-
-
-        # Check CV feasibility
 
         smallest_class = (
             y_train.value_counts().min()
@@ -509,6 +541,12 @@ if uploaded_file is not None:
 
                 model = DecisionTreeClassifier(
                     max_depth=depth,
+                    min_samples_leaf=int(
+                        min_samples_leaf
+                    ),
+                    min_samples_split=int(
+                        min_samples_split
+                    ),
                     random_state=42
                 )
 
@@ -615,73 +653,17 @@ if uploaded_file is not None:
 
 
         # ====================================================
-        # SHOW CROSS-VALIDATION RESULTS
-        # ====================================================
-
-        st.subheader(
-            "Cross-Validation Results"
-        )
-
-
-        display_results = (
-            results_df.copy()
-        )
-
-        display_results[
-            metric_name
-        ] = (
-            display_results[
-                metric_name
-            ].round(4)
-        )
-
-
-        st.dataframe(
-            display_results,
-            use_container_width=True
-        )
-
-
-        st.subheader(
-            f"{metric_name} vs. Tree Depth"
-        )
-
-
-        chart_df = (
-            results_df
-            .set_index("Tree Depth")
-        )
-
-
-        st.line_chart(
-            chart_df
-        )
-
-
-        st.success(
-            f"""
-            Optimal tree depth = **{best_depth}**
-
-            It was selected because tree depth
-            **{best_depth}** produced the **{selection_word}
-            mean cross-validated {metric_name}**
-            across the candidate tree depths.
-            """
-        )
-
-
-        st.metric(
-            f"Cross-Validated {metric_name}",
-            f"{best_score:.3f}"
-        )
-
-
-        # ====================================================
         # FIT FINAL MODEL
         # ====================================================
 
         final_model = DecisionTreeClassifier(
             max_depth=best_depth,
+            min_samples_leaf=int(
+                min_samples_leaf
+            ),
+            min_samples_split=int(
+                min_samples_split
+            ),
             random_state=42
         )
 
@@ -707,13 +689,8 @@ if uploaded_file is not None:
 
 
         # ====================================================
-        # SHOW DECISION TREE
+        # FEATURE NAMES
         # ====================================================
-
-        st.subheader(
-            "Optimal Decision Tree"
-        )
-
 
         fitted_preprocessor = (
             final_pipeline
@@ -735,33 +712,9 @@ if uploaded_file is not None:
         )
 
 
-        fig, ax = plt.subplots(
-            figsize=(20, 10)
-        )
-
-
-        plot_tree(
-            tree_model,
-            feature_names=transformed_feature_names,
-            class_names=["0", "1"],
-            filled=True,
-            rounded=True,
-            proportion=False,
-            ax=ax
-        )
-
-
-        st.pyplot(fig)
-
-
         # ====================================================
         # VARIABLE IMPORTANCE
         # ====================================================
-
-        st.subheader(
-            "Variable Importance"
-        )
-
 
         transformed_importance = (
             tree_model.feature_importances_
@@ -830,304 +783,552 @@ if uploaded_file is not None:
         )
 
 
-        importance_df[
-            "Importance"
-        ] = (
-            importance_df[
-                "Importance"
-            ].round(4)
+        # ====================================================
+        # STORE EVERYTHING IN SESSION STATE
+        # ====================================================
+
+        st.session_state.model_built = True
+
+        st.session_state.model_df = model_df
+
+        st.session_state.X_train = X_train
+        st.session_state.X_test = X_test
+
+        st.session_state.y_train = y_train
+        st.session_state.y_test = y_test
+
+        st.session_state.final_pipeline = (
+            final_pipeline
+        )
+
+        st.session_state.results_df = (
+            results_df
+        )
+
+        st.session_state.best_depth = (
+            best_depth
+        )
+
+        st.session_state.best_score = (
+            best_score
+        )
+
+        st.session_state.metric_name = (
+            metric_name
+        )
+
+        st.session_state.selection_word = (
+            selection_word
+        )
+
+        st.session_state.importance_df = (
+            importance_df
+        )
+
+        st.session_state.transformed_feature_names = (
+            transformed_feature_names
+        )
+
+        st.session_state.tree_model = (
+            tree_model
+        )
+
+        st.session_state.min_samples_leaf = (
+            min_samples_leaf
+        )
+
+        st.session_state.min_samples_split = (
+            min_samples_split
+        )
+
+        st.session_state.test_percent = (
+            test_percent
         )
 
 
+# ============================================================
+# DISPLAY SAVED MODEL RESULTS
+# ============================================================
+
+if st.session_state.model_built:
+
+    X_train = st.session_state.X_train
+    X_test = st.session_state.X_test
+
+    y_train = st.session_state.y_train
+    y_test = st.session_state.y_test
+
+    final_pipeline = (
+        st.session_state.final_pipeline
+    )
+
+    results_df = (
+        st.session_state.results_df
+    )
+
+    best_depth = (
+        st.session_state.best_depth
+    )
+
+    best_score = (
+        st.session_state.best_score
+    )
+
+    metric_name = (
+        st.session_state.metric_name
+    )
+
+    selection_word = (
+        st.session_state.selection_word
+    )
+
+    importance_df = (
+        st.session_state.importance_df
+    )
+
+    transformed_feature_names = (
+        st.session_state.transformed_feature_names
+    )
+
+    tree_model = (
+        st.session_state.tree_model
+    )
+
+    model_df = (
+        st.session_state.model_df
+    )
+
+
+    # ========================================================
+    # TRAIN / TEST SIZE
+    # ========================================================
+
+    st.subheader(
+        "Training and Testing Samples"
+    )
+
+    split_col1, split_col2 = st.columns(2)
+
+    with split_col1:
+
+        st.metric(
+            "Training Observations",
+            len(X_train)
+        )
+
+    with split_col2:
+
+        st.metric(
+            "Testing Observations",
+            len(X_test)
+        )
+
+
+    # ========================================================
+    # CROSS-VALIDATION RESULTS
+    # ========================================================
+
+    st.subheader(
+        "Cross-Validation Results"
+    )
+
+
+    display_results = (
+        results_df.copy()
+    )
+
+    display_results[
+        metric_name
+    ] = (
+        display_results[
+            metric_name
+        ].round(4)
+    )
+
+
+    st.dataframe(
+        display_results,
+        use_container_width=True
+    )
+
+
+    # ========================================================
+    # PERFORMANCE VS DEPTH
+    # ========================================================
+
+    st.subheader(
+        f"{metric_name} vs. Tree Depth"
+    )
+
+
+    chart_df = (
+        results_df
+        .set_index("Tree Depth")
+    )
+
+
+    st.line_chart(
+        chart_df
+    )
+
+
+    st.success(
+        f"""
+        Optimal tree depth = **{best_depth}**
+
+        It was selected because tree depth
+        **{best_depth}** produced the **{selection_word}
+        mean cross-validated {metric_name}**
+        across the candidate tree depths.
+        """
+    )
+
+
+    st.metric(
+        f"Cross-Validated {metric_name}",
+        f"{best_score:.3f}"
+    )
+
+
+    # ========================================================
+    # SHOW DECISION TREE
+    # ========================================================
+
+    st.subheader(
+        "Optimal Decision Tree"
+    )
+
+
+    fig, ax = plt.subplots(
+        figsize=(20, 10)
+    )
+
+
+    plot_tree(
+        tree_model,
+        feature_names=transformed_feature_names,
+        class_names=["0", "1"],
+        filled=True,
+        rounded=True,
+        proportion=False,
+        ax=ax
+    )
+
+
+    st.pyplot(fig)
+
+
+    # ========================================================
+    # VARIABLE IMPORTANCE
+    # ========================================================
+
+    st.subheader(
+        "Variable Importance"
+    )
+
+
+    display_importance = (
+        importance_df.copy()
+    )
+
+
+    display_importance[
+        "Importance"
+    ] = (
+        display_importance[
+            "Importance"
+        ].round(4)
+    )
+
+
+    st.dataframe(
+        display_importance,
+        use_container_width=True
+    )
+
+
+    st.bar_chart(
+        display_importance.set_index(
+            "Variable"
+        )
+    )
+
+
+    # ========================================================
+    # CLASSIFICATION CUTOFF
+    # ========================================================
+
+    st.subheader(
+        "Classification Cutoff"
+    )
+
+
+    cutoff = st.number_input(
+        "Enter classification cutoff:",
+        min_value=0.00,
+        max_value=1.00,
+        value=0.50,
+        step=0.01,
+        format="%.2f",
+        key="classification_cutoff"
+    )
+
+
+    st.write(
+        f"""
+        An observation is classified as **1**
+        when its predicted probability is
+        greater than or equal to **{cutoff:.2f}**.
+
+        Otherwise, it is classified as **0**.
+        """
+    )
+
+
+    # ========================================================
+    # TRAINING PREDICTIONS
+    # ========================================================
+
+    train_probabilities = (
+        final_pipeline.predict_proba(
+            X_train
+        )[:, 1]
+    )
+
+
+    train_metrics, train_predictions = (
+        calculate_metrics(
+            y_train,
+            train_probabilities,
+            cutoff
+        )
+    )
+
+
+    train_cm = confusion_matrix(
+        y_train,
+        train_predictions,
+        labels=[0, 1]
+    )
+
+
+    # ========================================================
+    # TEST PREDICTIONS
+    # ========================================================
+
+    test_probabilities = (
+        final_pipeline.predict_proba(
+            X_test
+        )[:, 1]
+    )
+
+
+    test_metrics, test_predictions = (
+        calculate_metrics(
+            y_test,
+            test_probabilities,
+            cutoff
+        )
+    )
+
+
+    test_cm = confusion_matrix(
+        y_test,
+        test_predictions,
+        labels=[0, 1]
+    )
+
+
+    # ========================================================
+    # CONFUSION MATRICES
+    # ========================================================
+
+    st.subheader(
+        "Confusion Matrices"
+    )
+
+
+    cm_col1, cm_col2 = st.columns(2)
+
+
+    with cm_col1:
+
+        st.write(
+            "**Training Set**"
+        )
+
+        train_cm_df = pd.DataFrame(
+            train_cm,
+            index=[
+                "Actual 0",
+                "Actual 1"
+            ],
+            columns=[
+                "Predicted 0",
+                "Predicted 1"
+            ]
+        )
+
         st.dataframe(
-            importance_df,
+            train_cm_df,
             use_container_width=True
         )
 
 
-        st.bar_chart(
-            importance_df.set_index(
-                "Variable"
-            )
-        )
-
-
-        # ====================================================
-        # CUTOFF
-        # ====================================================
-
-        st.subheader(
-            "Classification Cutoff"
-        )
-
-
-        cutoff = st.number_input(
-            "Enter classification cutoff:",
-            min_value=0.00,
-            max_value=1.00,
-            value=0.50,
-            step=0.01,
-            format="%.2f"
-        )
-
+    with cm_col2:
 
         st.write(
-            f"""
-            An observation is classified as **1**
-            when its predicted probability is
-            greater than or equal to **{cutoff:.2f}**.
+            "**Testing Set**"
+        )
 
-            Otherwise, it is classified as **0**.
-            """
+        test_cm_df = pd.DataFrame(
+            test_cm,
+            index=[
+                "Actual 0",
+                "Actual 1"
+            ],
+            columns=[
+                "Predicted 0",
+                "Predicted 1"
+            ]
+        )
+
+        st.dataframe(
+            test_cm_df,
+            use_container_width=True
         )
 
 
-        # ====================================================
-        # TRAINING PERFORMANCE
-        # ====================================================
+    # ========================================================
+    # PERFORMANCE METRICS
+    # ========================================================
 
-        train_probabilities = (
-            final_pipeline
-            .predict_proba(
-                X_train
-            )[:, 1]
-        )
+    st.subheader(
+        "Model Performance"
+    )
 
 
-        train_metrics, train_predictions = (
-            calculate_metrics(
-                y_train,
-                train_probabilities,
-                cutoff
-            )
-        )
+    performance_df = pd.DataFrame(
+        {
+            "Metric": list(
+                train_metrics.keys()
+            ),
+            "Training Set": list(
+                train_metrics.values()
+            ),
+            "Testing Set": [
+                test_metrics[key]
+                for key in train_metrics.keys()
+            ]
+        }
+    )
 
 
-        train_cm = confusion_matrix(
-            y_train,
-            train_predictions,
-            labels=[0, 1]
-        )
-
-
-        # ====================================================
-        # TEST PERFORMANCE
-        # ====================================================
-
-        test_probabilities = (
-            final_pipeline
-            .predict_proba(
-                X_test
-            )[:, 1]
-        )
-
-
-        test_metrics, test_predictions = (
-            calculate_metrics(
-                y_test,
-                test_probabilities,
-                cutoff
-            )
-        )
-
-
-        test_cm = confusion_matrix(
-            y_test,
-            test_predictions,
-            labels=[0, 1]
-        )
-
-
-        # ====================================================
-        # CONFUSION MATRICES
-        # ====================================================
-
-        st.subheader(
-            "Confusion Matrices"
-        )
-
-
-        cm_col1, cm_col2 = st.columns(2)
-
-
-        with cm_col1:
-
-            st.write(
-                "**Training Set**"
-            )
-
-            train_cm_df = pd.DataFrame(
-                train_cm,
-                index=[
-                    "Actual 0",
-                    "Actual 1"
-                ],
-                columns=[
-                    "Predicted 0",
-                    "Predicted 1"
-                ]
-            )
-
-            st.dataframe(
-                train_cm_df,
-                use_container_width=True
-            )
-
-
-        with cm_col2:
-
-            st.write(
-                "**Testing Set**"
-            )
-
-            test_cm_df = pd.DataFrame(
-                test_cm,
-                index=[
-                    "Actual 0",
-                    "Actual 1"
-                ],
-                columns=[
-                    "Predicted 0",
-                    "Predicted 1"
-                ]
-            )
-
-            st.dataframe(
-                test_cm_df,
-                use_container_width=True
-            )
-
-
-        # ====================================================
-        # PERFORMANCE METRICS
-        # ====================================================
-
-        st.subheader(
-            "Model Performance"
-        )
-
-
-        performance_df = pd.DataFrame(
-            {
-                "Metric": list(
-                    train_metrics.keys()
-                ),
-                "Training Set": list(
-                    train_metrics.values()
-                ),
-                "Testing Set": [
-                    test_metrics[key]
-                    for key in train_metrics.keys()
-                ]
-            }
-        )
-
-
+    performance_df[
+        "Training Set"
+    ] = (
         performance_df[
             "Training Set"
-        ] = (
-            performance_df[
-                "Training Set"
-            ].round(4)
-        )
+        ].round(4)
+    )
 
 
+    performance_df[
+        "Testing Set"
+    ] = (
         performance_df[
             "Testing Set"
-        ] = (
-            performance_df[
-                "Testing Set"
-            ].round(4)
-        )
+        ].round(4)
+    )
 
 
-        st.dataframe(
-            performance_df,
-            use_container_width=True
-        )
+    st.dataframe(
+        performance_df,
+        use_container_width=True
+    )
 
 
-        # ====================================================
-        # EXPORT DATA
-        # ====================================================
+    # ========================================================
+    # EXPORT DATA
+    # ========================================================
 
-        st.subheader(
-            "Download Predictions"
-        )
-
-
-        train_output = model_df.loc[
-            X_train.index
-        ].copy()
+    st.subheader(
+        "Download Predictions"
+    )
 
 
-        train_output[
-            "Data_Set"
-        ] = "Training"
+    train_output = model_df.loc[
+        X_train.index
+    ].copy()
 
 
-        train_output[
-            "Predicted_Probability"
-        ] = train_probabilities
+    train_output[
+        "Data_Set"
+    ] = "Training"
 
 
-        train_output[
-            "Predicted_Class"
-        ] = train_predictions
+    train_output[
+        "Predicted_Probability"
+    ] = train_probabilities
 
 
-        test_output = model_df.loc[
-            X_test.index
-        ].copy()
+    train_output[
+        "Predicted_Class"
+    ] = train_predictions
 
 
-        test_output[
-            "Data_Set"
-        ] = "Testing"
+    test_output = model_df.loc[
+        X_test.index
+    ].copy()
 
 
-        test_output[
-            "Predicted_Probability"
-        ] = test_probabilities
+    test_output[
+        "Data_Set"
+    ] = "Testing"
 
 
-        test_output[
-            "Predicted_Class"
-        ] = test_predictions
+    test_output[
+        "Predicted_Probability"
+    ] = test_probabilities
 
 
-        output_df = pd.concat(
-            [
-                train_output,
-                test_output
-            ]
-        ).sort_index()
+    test_output[
+        "Predicted_Class"
+    ] = test_predictions
 
 
-        st.write(
-            f"""
-            Predicted classifications in the downloaded
-            file use a cutoff of **{cutoff:.2f}**.
-            """
-        )
+    output_df = pd.concat(
+        [
+            train_output,
+            test_output
+        ]
+    ).sort_index()
 
 
-        st.dataframe(
-            output_df.head(20),
-            use_container_width=True
-        )
+    st.write(
+        f"""
+        Predicted classifications in the downloaded
+        file use a cutoff of **{cutoff:.2f}**.
+        """
+    )
 
 
-        csv = (
-            output_df
-            .to_csv(index=False)
-            .encode("utf-8")
-        )
+    st.dataframe(
+        output_df.head(20),
+        use_container_width=True
+    )
 
 
-        st.download_button(
-            label="Download Predictions",
-            data=csv,
-            file_name="decision_tree_predictions.csv",
-            mime="text/csv"
-        )
+    csv = (
+        output_df
+        .to_csv(index=False)
+        .encode("utf-8")
+    )
+
+
+    st.download_button(
+        label="Download Predictions",
+        data=csv,
+        file_name="decision_tree_predictions.csv",
+        mime="text/csv"
+    )
