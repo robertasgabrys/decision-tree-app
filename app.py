@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
-from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import (
     accuracy_score,
@@ -32,28 +32,32 @@ st.title("Decision Tree Model Builder")
 
 st.write(
     """
-    Upload a dataset, select the outcome and predictor variables,
-    use cross-validation to select the optimal tree depth,
-    evaluate the final decision tree, and export predictions.
+    Build and evaluate a binary classification decision tree.
+    The outcome variable must be coded as 0 and 1.
     """
 )
 
 
 # ============================================================
-# INITIALIZE SESSION STATE
+# SESSION STATE
 # ============================================================
 
 if "model_built" not in st.session_state:
     st.session_state.model_built = False
 
+if "use_global_optimum" not in st.session_state:
+    st.session_state.use_global_optimum = False
+
 
 # ============================================================
-# HELPER FUNCTION: PERFORMANCE METRICS
+# HELPER FUNCTIONS
 # ============================================================
 
 def calculate_metrics(y_true, probabilities, cutoff):
 
-    predictions = (probabilities >= cutoff).astype(int)
+    predictions = (
+        probabilities >= cutoff
+    ).astype(int)
 
     tn, fp, fn, tp = confusion_matrix(
         y_true,
@@ -66,7 +70,7 @@ def calculate_metrics(y_true, probabilities, cutoff):
         predictions
     )
 
-    misclassification_error = 1 - accuracy
+    misclassification = 1 - accuracy
 
     precision = precision_score(
         y_true,
@@ -108,56 +112,619 @@ def calculate_metrics(y_true, probabilities, cutoff):
 
     metrics = {
         "Accuracy": accuracy,
-        "Misclassification Error": misclassification_error,
-        "Precision": precision,
-        "Recall": recall,
+        "Misclassification Error": misclassification,
         "F1 Score": f1,
+        "ROC AUC": roc_auc,
         "False Positive Rate": false_positive_rate,
         "False Negative Rate": false_negative_rate,
-        "ROC AUC": roc_auc
+        "Recall": recall,
+        "Precision": precision
     }
 
     return metrics, predictions
 
 
-# ============================================================
-# HELPER FUNCTION: GET CV METRIC
-# ============================================================
-
-def get_selected_metric(
+def metric_value(
     y_true,
     probabilities,
+    cutoff,
     metric_name
 ):
 
     metrics, _ = calculate_metrics(
         y_true,
         probabilities,
-        cutoff=0.50
+        cutoff
     )
 
     return metrics[metric_name]
 
 
+def make_preprocessor(
+    numeric_features,
+    categorical_features
+):
+
+    numeric_transformer = Pipeline(
+        steps=[
+            (
+                "imputer",
+                SimpleImputer(
+                    strategy="median"
+                )
+            )
+        ]
+    )
+
+    categorical_transformer = Pipeline(
+        steps=[
+            (
+                "imputer",
+                SimpleImputer(
+                    strategy="most_frequent"
+                )
+            ),
+            (
+                "onehot",
+                OneHotEncoder(
+                    handle_unknown="ignore"
+                )
+            )
+        ]
+    )
+
+    return ColumnTransformer(
+        transformers=[
+            (
+                "numeric",
+                numeric_transformer,
+                numeric_features
+            ),
+            (
+                "categorical",
+                categorical_transformer,
+                categorical_features
+            )
+        ]
+    )
+
+
+def make_pipeline(
+    depth,
+    min_samples_leaf,
+    min_samples_split,
+    numeric_features,
+    categorical_features
+):
+
+    preprocessor = make_preprocessor(
+        numeric_features,
+        categorical_features
+    )
+
+    tree = DecisionTreeClassifier(
+        max_depth=int(depth),
+        min_samples_leaf=int(
+            min_samples_leaf
+        ),
+        min_samples_split=int(
+            min_samples_split
+        ),
+        random_state=42
+    )
+
+    return Pipeline(
+        steps=[
+            (
+                "preprocessor",
+                preprocessor
+            ),
+            (
+                "model",
+                tree
+            )
+        ]
+    )
+
+
+def confusion_table(
+    y_true,
+    predictions
+):
+
+    cm = confusion_matrix(
+        y_true,
+        predictions,
+        labels=[0, 1]
+    )
+
+    table = pd.DataFrame(
+        cm,
+        index=[
+            "Actual 0",
+            "Actual 1"
+        ],
+        columns=[
+            "Predicted 0",
+            "Predicted 1"
+        ]
+    )
+
+    table["Total"] = table.sum(
+        axis=1
+    )
+
+    total_row = pd.DataFrame(
+        [
+            [
+                table[
+                    "Predicted 0"
+                ].sum(),
+                table[
+                    "Predicted 1"
+                ].sum(),
+                table[
+                    "Total"
+                ].sum()
+            ]
+        ],
+        index=["Total"],
+        columns=[
+            "Predicted 0",
+            "Predicted 1",
+            "Total"
+        ]
+    )
+
+    return pd.concat(
+        [
+            table,
+            total_row
+        ]
+    )
+
+
+def get_variable_importance(
+    pipeline,
+    numeric_features,
+    categorical_features
+):
+
+    preprocessor = (
+        pipeline.named_steps[
+            "preprocessor"
+        ]
+    )
+
+    tree = (
+        pipeline.named_steps[
+            "model"
+        ]
+    )
+
+    importance = (
+        tree.feature_importances_
+    )
+
+    importance_dict = {}
+
+    position = 0
+
+    # Numeric variables each create one transformed column
+    for variable in numeric_features:
+
+        importance_dict[
+            variable
+        ] = float(
+            importance[position]
+        )
+
+        position += 1
+
+    # Categorical variables can create several dummy columns
+    if len(categorical_features) > 0:
+
+        encoder = (
+            preprocessor
+            .named_transformers_[
+                "categorical"
+            ]
+            .named_steps[
+                "onehot"
+            ]
+        )
+
+        for variable, categories in zip(
+            categorical_features,
+            encoder.categories_
+        ):
+
+            number_of_columns = len(
+                categories
+            )
+
+            importance_dict[
+                variable
+            ] = float(
+                importance[
+                    position:
+                    position
+                    + number_of_columns
+                ].sum()
+            )
+
+            position += (
+                number_of_columns
+            )
+
+    result = pd.DataFrame(
+        {
+            "Variable":
+                list(
+                    importance_dict.keys()
+                ),
+            "Importance":
+                list(
+                    importance_dict.values()
+                )
+        }
+    )
+
+    return (
+        result
+        .sort_values(
+            "Importance",
+            ascending=False
+        )
+        .reset_index(drop=True)
+    )
+
+
 # ============================================================
-# 1. UPLOAD DATA
+# INTERACTIVE DECISION TREE
+# ============================================================
+
+def create_tree_figure(
+    pipeline,
+    feature_names
+):
+
+    tree_model = (
+        pipeline.named_steps[
+            "model"
+        ]
+    )
+
+    tree = tree_model.tree_
+
+    children_left = (
+        tree.children_left
+    )
+
+    children_right = (
+        tree.children_right
+    )
+
+    node_depth = {}
+
+    x_position = {}
+
+    leaf_counter = [0]
+
+
+    def assign_positions(
+        node_id,
+        depth=0
+    ):
+
+        node_depth[
+            node_id
+        ] = depth
+
+        left = children_left[
+            node_id
+        ]
+
+        right = children_right[
+            node_id
+        ]
+
+        if left == right:
+
+            x_position[
+                node_id
+            ] = (
+                leaf_counter[0]
+            )
+
+            leaf_counter[0] += 1
+
+        else:
+
+            assign_positions(
+                left,
+                depth + 1
+            )
+
+            assign_positions(
+                right,
+                depth + 1
+            )
+
+            x_position[
+                node_id
+            ] = (
+                x_position[left]
+                + x_position[right]
+            ) / 2
+
+
+    assign_positions(0)
+
+
+    edge_x = []
+    edge_y = []
+
+
+    for node_id in range(
+        tree.node_count
+    ):
+
+        left = children_left[
+            node_id
+        ]
+
+        right = children_right[
+            node_id
+        ]
+
+        for child in [
+            left,
+            right
+        ]:
+
+            if child != -1:
+
+                edge_x.extend(
+                    [
+                        x_position[
+                            node_id
+                        ],
+                        x_position[
+                            child
+                        ],
+                        None
+                    ]
+                )
+
+                edge_y.extend(
+                    [
+                        -node_depth[
+                            node_id
+                        ],
+                        -node_depth[
+                            child
+                        ],
+                        None
+                    ]
+                )
+
+
+    node_x = []
+    node_y = []
+
+    node_text = []
+    hover_text = []
+
+
+    for node_id in range(
+        tree.node_count
+    ):
+
+        node_x.append(
+            x_position[
+                node_id
+            ]
+        )
+
+        node_y.append(
+            -node_depth[
+                node_id
+            ]
+        )
+
+        samples = int(
+            tree.n_node_samples[
+                node_id
+            ]
+        )
+
+        values = (
+            tree.value[
+                node_id
+            ][0]
+        )
+
+        total = values.sum()
+
+        probability_1 = (
+            values[1] / total
+            if total > 0
+            and len(values) > 1
+            else 0
+        )
+
+        predicted_class = (
+            1
+            if probability_1 >= 0.50
+            else 0
+        )
+
+        left = children_left[
+            node_id
+        ]
+
+        right = children_right[
+            node_id
+        ]
+
+
+        if left != right:
+
+            feature_index = (
+                tree.feature[
+                    node_id
+                ]
+            )
+
+            feature_name = (
+                feature_names[
+                    feature_index
+                ]
+            )
+
+            threshold = (
+                tree.threshold[
+                    node_id
+                ]
+            )
+
+            node_text.append(
+                f"{feature_name}<br>"
+                f"≤ {threshold:.2f}"
+            )
+
+            hover_text.append(
+                f"<b>Split:</b> "
+                f"{feature_name} "
+                f"≤ {threshold:.2f}"
+                f"<br><b>Samples:</b> "
+                f"{samples:,}"
+                f"<br><b>P(Class 1):</b> "
+                f"{probability_1:.2%}"
+                f"<br><b>Majority class:</b> "
+                f"{predicted_class}"
+            )
+
+        else:
+
+            node_text.append(
+                f"Leaf<br>"
+                f"P(1) = "
+                f"{probability_1:.1%}"
+            )
+
+            hover_text.append(
+                f"<b>Terminal Leaf</b>"
+                f"<br><b>Samples:</b> "
+                f"{samples:,}"
+                f"<br><b>P(Class 1):</b> "
+                f"{probability_1:.2%}"
+                f"<br><b>Majority class:</b> "
+                f"{predicted_class}"
+            )
+
+
+    fig = go.Figure()
+
+
+    fig.add_trace(
+        go.Scatter(
+            x=edge_x,
+            y=edge_y,
+            mode="lines",
+            hoverinfo="skip",
+            line=dict(
+                width=1.5
+            ),
+            showlegend=False
+        )
+    )
+
+
+    fig.add_trace(
+        go.Scatter(
+            x=node_x,
+            y=node_y,
+            mode="markers+text",
+            text=node_text,
+            textposition="middle center",
+            hovertext=hover_text,
+            hoverinfo="text",
+            marker=dict(
+                size=70,
+                line=dict(
+                    width=2
+                )
+            ),
+            textfont=dict(
+                size=10
+            ),
+            showlegend=False
+        )
+    )
+
+
+    fig.update_layout(
+        height=max(
+            500,
+            130 * (
+                max(
+                    node_depth.values()
+                ) + 1
+            )
+        ),
+        margin=dict(
+            l=20,
+            r=20,
+            t=20,
+            b=20
+        ),
+        xaxis=dict(
+            visible=False
+        ),
+        yaxis=dict(
+            visible=False
+        ),
+        hovermode="closest"
+    )
+
+    return fig
+
+
+# ============================================================
+# UPLOAD DATA
 # ============================================================
 
 uploaded_file = st.file_uploader(
     "Upload a CSV or Excel file",
-    type=["csv", "xlsx"]
+    type=[
+        "csv",
+        "xlsx"
+    ]
 )
 
 
 if uploaded_file is not None:
 
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
+    if uploaded_file.name.lower().endswith(
+        ".csv"
+    ):
+
+        df = pd.read_csv(
+            uploaded_file
+        )
 
     else:
-        df = pd.read_excel(uploaded_file)
 
-    st.subheader("Data Preview")
+        df = pd.read_excel(
+            uploaded_file
+        )
+
+
+    st.subheader(
+        "Data Preview"
+    )
 
     st.dataframe(
         df.head(10),
@@ -165,16 +732,18 @@ if uploaded_file is not None:
     )
 
     st.write(
-        f"Rows: **{df.shape[0]}** | "
+        f"Rows: **{df.shape[0]:,}** | "
         f"Columns: **{df.shape[1]}**"
     )
 
 
     # ========================================================
-    # 2. OUTCOME VARIABLE
+    # 1. OUTCOME
     # ========================================================
 
-    st.subheader("1. Select Outcome Variable")
+    st.subheader(
+        "1. Select Outcome Variable"
+    )
 
     target = st.selectbox(
         "Which column are you predicting?",
@@ -183,74 +752,86 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # 3. PREDICTORS
+    # 2. PREDICTORS
     # ========================================================
 
-    st.subheader("2. Select Predictor Variables")
-
-    available_predictors = [
-        col
-        for col in df.columns
-        if col != target
-    ]
+    st.subheader(
+        "2. Select Predictor Variables"
+    )
 
     predictors = st.multiselect(
         "Select the columns to use as predictors:",
-        options=available_predictors
+        options=[
+            column
+            for column in df.columns
+            if column != target
+        ]
     )
 
 
     # ========================================================
-    # 4. TRAIN / TEST SPLIT
+    # 3. TRAIN / TEST
     # ========================================================
 
-    st.subheader("3. Select Training and Testing Split")
+    st.subheader(
+        "3. Select Training and Testing Split"
+    )
 
     test_percent = st.selectbox(
         "Percentage of observations used for testing:",
-        options=[20, 30, 40],
+        options=[
+            20,
+            30,
+            40
+        ],
         index=1
     )
 
-    test_size = test_percent / 100
-
 
     # ========================================================
-    # 5. TREE DEPTH RANGE
+    # 4. DEPTH RANGE
     # ========================================================
 
-    st.subheader("4. Select Tree Depth Range")
+    st.subheader(
+        "4. Select Tree Depth Range"
+    )
 
-    col1, col2 = st.columns(2)
+    depth_col1, depth_col2 = (
+        st.columns(2)
+    )
 
-    with col1:
+    with depth_col1:
 
         min_depth = st.number_input(
             "Minimum tree depth",
             min_value=1,
-            max_value=50,
+            max_value=30,
             value=1,
             step=1
         )
 
-    with col2:
+    with depth_col2:
 
         max_depth = st.number_input(
             "Maximum tree depth",
             min_value=1,
-            max_value=50,
+            max_value=30,
             value=10,
             step=1
         )
 
 
     # ========================================================
-    # 6. TREE CONSTRAINTS
+    # 5. CONSTRAINTS
     # ========================================================
 
-    st.subheader("5. Tree Constraints")
+    st.subheader(
+        "5. Tree Constraints"
+    )
 
-    constraint_col1, constraint_col2 = st.columns(2)
+    constraint_col1, constraint_col2 = (
+        st.columns(2)
+    )
 
     with constraint_col1:
 
@@ -272,13 +853,15 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # 7. MODEL-SELECTION METRIC
+    # 6. METRIC
     # ========================================================
 
-    st.subheader("6. Select Model-Selection Metric")
+    st.subheader(
+        "6. Select Model-Selection Metric"
+    )
 
     metric_name = st.selectbox(
-        "Metric used to select the optimal tree depth:",
+        "Metric used to evaluate tree performance:",
         options=[
             "Accuracy",
             "Misclassification Error",
@@ -294,41 +877,76 @@ if uploaded_file is not None:
 
     cv_folds = st.selectbox(
         "Number of cross-validation folds:",
-        options=[3, 5, 10],
+        options=[
+            3,
+            5,
+            10
+        ],
         index=1
     )
 
 
-    st.info(
-        """
-        Cross-validation is performed only on the training data.
+    # ========================================================
+    # 7. CUTOFF BEFORE BUILDING
+    # ========================================================
 
-        For Accuracy, Misclassification Error, F1 Score,
-        False Positive Rate, False Negative Rate, Recall,
-        and Precision, a cutoff of 0.50 is used during
-        cross-validation.
+    st.subheader(
+        "7. Classification Cutoff"
+    )
 
-        ROC AUC does not depend on a classification cutoff.
-        """
+    chosen_cutoff = st.number_input(
+        "Enter classification cutoff:",
+        min_value=0.00,
+        max_value=1.00,
+        value=0.50,
+        step=0.01,
+        format="%.2f"
+    )
+
+    st.caption(
+        "An observation is classified as 1 "
+        "when its predicted probability is "
+        "greater than or equal to the cutoff."
     )
 
 
+    with st.expander(
+        "What do the performance metrics mean?"
+    ):
+
+        st.markdown(
+            """
+**Accuracy:** Percentage of all observations classified correctly.
+
+**Misclassification Error:** Percentage of observations classified incorrectly.
+
+**F1 Score:** Balances precision and recall.
+
+**ROC AUC:** Measures how well the model ranks class 1 above class 0 across all possible cutoffs.
+
+**False Positive Rate:** Of the actual 0s, the percentage incorrectly classified as 1.
+
+**False Negative Rate:** Of the actual 1s, the percentage incorrectly classified as 0.
+
+**Recall:** Of the actual 1s, the percentage correctly identified as 1.
+
+**Precision:** Of observations predicted as 1, the percentage that are actually 1.
+            """
+        )
+
+
     # ========================================================
-    # BUILD MODEL BUTTON
+    # BUILD MODEL
     # ========================================================
 
-    build_model = st.button(
-        "Build Decision Tree"
-    )
+    if st.button(
+        "Build Decision Tree",
+        type="primary"
+    ):
 
-
-    if build_model:
-
-        # ----------------------------------------------------
-        # VALIDATION
-        # ----------------------------------------------------
-
-        if len(predictors) == 0:
+        if len(
+            predictors
+        ) == 0:
 
             st.error(
                 "Please select at least one predictor variable."
@@ -347,23 +965,12 @@ if uploaded_file is not None:
             st.stop()
 
 
-        if min_samples_split < 2:
-
-            st.error(
-                "Minimum observations required to split "
-                "a node must be at least 2."
-            )
-
-            st.stop()
-
-
-        y_original = df[target]
-
-        valid_rows = y_original.notna()
-
-        model_df = df.loc[
-            valid_rows
-        ].copy()
+        model_df = (
+            df.loc[
+                df[target].notna()
+            ]
+            .copy()
+        )
 
         X = model_df[
             predictors
@@ -374,39 +981,29 @@ if uploaded_file is not None:
         ].copy()
 
 
-        # ----------------------------------------------------
-        # OUTCOME MUST BE 0 / 1
-        # ----------------------------------------------------
-
-        unique_values = set(
+        if set(
             y.unique()
-        )
-
-        if unique_values != {0, 1}:
+        ) != {
+            0,
+            1
+        }:
 
             st.error(
-                """
-                The outcome variable must contain exactly
-                two classes coded as 0 and 1.
-
-                0 = Negative class
-
-                1 = Positive class
-                """
+                "The outcome variable must contain "
+                "exactly two classes coded 0 and 1."
             )
 
             st.stop()
 
 
-        # ====================================================
-        # TRAIN / TEST SPLIT
-        # ====================================================
-
         X_train, X_test, y_train, y_test = (
             train_test_split(
                 X,
                 y,
-                test_size=test_size,
+                test_size=(
+                    test_percent
+                    / 100
+                ),
                 stratify=y,
                 random_state=42
             )
@@ -414,91 +1011,40 @@ if uploaded_file is not None:
 
 
         smallest_class = (
-            y_train.value_counts().min()
+            y_train
+            .value_counts()
+            .min()
         )
+
 
         if smallest_class < cv_folds:
 
             st.error(
-                f"""
-                There are not enough observations in the
-                smaller outcome class for {cv_folds}-fold
-                cross-validation.
-
-                Please choose fewer folds.
-                """
+                "There are not enough observations "
+                "in the smaller class for the "
+                "selected number of CV folds."
             )
 
             st.stop()
 
 
-        # ====================================================
-        # PREPROCESSING
-        # ====================================================
-
         numeric_features = (
             X_train
-            .select_dtypes(include=np.number)
+            .select_dtypes(
+                include=np.number
+            )
             .columns
             .tolist()
         )
 
         categorical_features = [
-            col
-            for col in X_train.columns
-            if col not in numeric_features
+            column
+            for column
+            in predictors
+            if column
+            not in numeric_features
         ]
 
-
-        numeric_transformer = Pipeline(
-            steps=[
-                (
-                    "imputer",
-                    SimpleImputer(
-                        strategy="median"
-                    )
-                )
-            ]
-        )
-
-
-        categorical_transformer = Pipeline(
-            steps=[
-                (
-                    "imputer",
-                    SimpleImputer(
-                        strategy="most_frequent"
-                    )
-                ),
-                (
-                    "onehot",
-                    OneHotEncoder(
-                        handle_unknown="ignore"
-                    )
-                )
-            ]
-        )
-
-
-        preprocessor = ColumnTransformer(
-            transformers=[
-                (
-                    "numeric",
-                    numeric_transformer,
-                    numeric_features
-                ),
-                (
-                    "categorical",
-                    categorical_transformer,
-                    categorical_features
-                )
-            ]
-        )
-
-
-        # ====================================================
-        # CROSS-VALIDATION
-        # ====================================================
 
         cv = StratifiedKFold(
             n_splits=cv_folds,
@@ -506,15 +1052,41 @@ if uploaded_file is not None:
             random_state=42
         )
 
-        results = []
+
+        depths = list(
+            range(
+                int(min_depth),
+                int(max_depth) + 1
+            )
+        )
+
+        cutoffs = np.round(
+            np.arange(
+                0.00,
+                1.001,
+                0.01
+            ),
+            2
+        )
 
 
-        for depth in range(
-            int(min_depth),
-            int(max_depth) + 1
-        ):
+        # ----------------------------------------------------
+        # CROSS-VALIDATED OUT-OF-FOLD PROBABILITIES
+        #
+        # Each tree depth is fitted once per fold.
+        # We then evaluate every cutoff from 0.00 to 1.00
+        # using the same out-of-fold probabilities.
+        # ----------------------------------------------------
 
-            fold_scores = []
+        oof_probabilities = {}
+
+
+        for depth in depths:
+
+            probabilities = pd.Series(
+                index=X_train.index,
+                dtype=float
+            )
 
 
             for train_index, validation_index in cv.split(
@@ -522,46 +1094,31 @@ if uploaded_file is not None:
                 y_train
             ):
 
-                X_cv_train = X_train.iloc[
-                    train_index
-                ]
+                X_cv_train = (
+                    X_train.iloc[
+                        train_index
+                    ]
+                )
 
-                X_cv_validation = X_train.iloc[
-                    validation_index
-                ]
+                X_cv_validation = (
+                    X_train.iloc[
+                        validation_index
+                    ]
+                )
 
-                y_cv_train = y_train.iloc[
-                    train_index
-                ]
-
-                y_cv_validation = y_train.iloc[
-                    validation_index
-                ]
-
-
-                model = DecisionTreeClassifier(
-                    max_depth=depth,
-                    min_samples_leaf=int(
-                        min_samples_leaf
-                    ),
-                    min_samples_split=int(
-                        min_samples_split
-                    ),
-                    random_state=42
+                y_cv_train = (
+                    y_train.iloc[
+                        train_index
+                    ]
                 )
 
 
-                pipeline = Pipeline(
-                    steps=[
-                        (
-                            "preprocessor",
-                            preprocessor
-                        ),
-                        (
-                            "model",
-                            model
-                        )
-                    ]
+                pipeline = make_pipeline(
+                    depth,
+                    min_samples_leaf,
+                    min_samples_split,
+                    numeric_features,
+                    categorical_features
                 )
 
 
@@ -578,216 +1135,242 @@ if uploaded_file is not None:
                 )
 
 
-                fold_metric = get_selected_metric(
-                    y_cv_validation,
-                    validation_probabilities,
-                    metric_name
+                probabilities.loc[
+                    X_cv_validation.index
+                ] = (
+                    validation_probabilities
                 )
 
 
-                fold_scores.append(
-                    fold_metric
-                )
+            oof_probabilities[
+                depth
+            ] = probabilities
 
 
-            results.append(
+        # ----------------------------------------------------
+        # DEPTH PERFORMANCE AT USER-SELECTED CUTOFF
+        # ----------------------------------------------------
+
+        depth_results = []
+
+
+        for depth in depths:
+
+            value = metric_value(
+                y_train,
+                oof_probabilities[
+                    depth
+                ].loc[
+                    y_train.index
+                ].values,
+                chosen_cutoff,
+                metric_name
+            )
+
+
+            depth_results.append(
                 {
-                    "Tree Depth": depth,
-                    metric_name: np.mean(
-                        fold_scores
-                    )
+                    "Tree Depth":
+                        depth,
+                    metric_name:
+                        value
                 }
             )
 
 
-        results_df = pd.DataFrame(
-            results
+        depth_results_df = pd.DataFrame(
+            depth_results
         )
 
 
-        # ====================================================
-        # SELECT OPTIMAL DEPTH
-        # ====================================================
-
-        metrics_to_minimize = [
+        metrics_to_minimize = {
             "Misclassification Error",
             "False Positive Rate",
             "False Negative Rate"
-        ]
+        }
 
 
-        if metric_name in metrics_to_minimize:
+        minimize_metric = (
+            metric_name
+            in metrics_to_minimize
+        )
 
-            best_index = (
-                results_df[
+
+        if minimize_metric:
+
+            best_depth_index = (
+                depth_results_df[
                     metric_name
                 ].idxmin()
             )
 
-            selection_word = "lowest"
-
         else:
 
-            best_index = (
-                results_df[
+            best_depth_index = (
+                depth_results_df[
                     metric_name
                 ].idxmax()
             )
 
-            selection_word = "highest"
 
-
-        best_depth = int(
-            results_df.loc[
-                best_index,
+        selected_depth = int(
+            depth_results_df.loc[
+                best_depth_index,
                 "Tree Depth"
             ]
         )
 
-        best_score = (
-            results_df.loc[
-                best_index,
+        selected_cv_score = float(
+            depth_results_df.loc[
+                best_depth_index,
                 metric_name
             ]
         )
 
 
-        # ====================================================
-        # FIT FINAL MODEL
-        # ====================================================
+        # ----------------------------------------------------
+        # FULL CUTOFF × DEPTH PERFORMANCE MATRIX
+        # ----------------------------------------------------
 
-        final_model = DecisionTreeClassifier(
-            max_depth=best_depth,
-            min_samples_leaf=int(
-                min_samples_leaf
-            ),
-            min_samples_split=int(
-                min_samples_split
-            ),
-            random_state=42
+        matrix = pd.DataFrame(
+            index=cutoffs,
+            columns=depths,
+            dtype=float
         )
 
 
-        final_pipeline = Pipeline(
-            steps=[
-                (
-                    "preprocessor",
-                    preprocessor
-                ),
-                (
-                    "model",
-                    final_model
+        for depth in depths:
+
+            probabilities = (
+                oof_probabilities[
+                    depth
+                ].loc[
+                    y_train.index
+                ].values
+            )
+
+
+            for cutoff in cutoffs:
+
+                matrix.loc[
+                    cutoff,
+                    depth
+                ] = metric_value(
+                    y_train,
+                    probabilities,
+                    float(cutoff),
+                    metric_name
                 )
-            ]
+
+
+        # ----------------------------------------------------
+        # GLOBAL OPTIMAL DEPTH + CUTOFF
+        # ----------------------------------------------------
+
+        if metric_name == "ROC AUC":
+
+            # ROC AUC does not depend on cutoff.
+            # Optimize depth only and retain user's chosen cutoff.
+
+            depth_auc = (
+                matrix.iloc[0]
+            )
+
+            global_depth = int(
+                depth_auc.idxmax()
+            )
+
+            global_cutoff = float(
+                chosen_cutoff
+            )
+
+            global_score = float(
+                depth_auc.loc[
+                    global_depth
+                ]
+            )
+
+        else:
+
+            matrix_values = (
+                matrix.values.astype(
+                    float
+                )
+            )
+
+
+            if minimize_metric:
+
+                flat_position = (
+                    np.nanargmin(
+                        matrix_values
+                    )
+                )
+
+            else:
+
+                flat_position = (
+                    np.nanargmax(
+                        matrix_values
+                    )
+                )
+
+
+            row_index, column_index = (
+                np.unravel_index(
+                    flat_position,
+                    matrix_values.shape
+                )
+            )
+
+            global_cutoff = float(
+                matrix.index[
+                    row_index
+                ]
+            )
+
+            global_depth = int(
+                matrix.columns[
+                    column_index
+                ]
+            )
+
+            global_score = float(
+                matrix.iloc[
+                    row_index,
+                    column_index
+                ]
+            )
+
+
+        # ----------------------------------------------------
+        # FIT MODEL SELECTED AT USER CUTOFF
+        # ----------------------------------------------------
+
+        selected_pipeline = (
+            make_pipeline(
+                selected_depth,
+                min_samples_leaf,
+                min_samples_split,
+                numeric_features,
+                categorical_features
+            )
         )
 
 
-        final_pipeline.fit(
+        selected_pipeline.fit(
             X_train,
             y_train
         )
 
 
-        # ====================================================
-        # FEATURE NAMES
-        # ====================================================
-
-        fitted_preprocessor = (
-            final_pipeline
-            .named_steps[
-                "preprocessor"
-            ]
-        )
-
-
-        transformed_feature_names = (
-            fitted_preprocessor
-            .get_feature_names_out()
-        )
-
-
-        tree_model = (
-            final_pipeline
-            .named_steps["model"]
-        )
-
-
-        # ====================================================
-        # VARIABLE IMPORTANCE
-        # ====================================================
-
-        transformed_importance = (
-            tree_model.feature_importances_
-        )
-
-
-        importance_by_variable = {
-            predictor: 0.0
-            for predictor in predictors
-        }
-
-
-        for feature_name, importance in zip(
-            transformed_feature_names,
-            transformed_importance
-        ):
-
-            clean_name = (
-                feature_name
-                .replace(
-                    "numeric__",
-                    ""
-                )
-                .replace(
-                    "categorical__",
-                    ""
-                )
-            )
-
-
-            for predictor in predictors:
-
-                if (
-                    clean_name == predictor
-                    or clean_name.startswith(
-                        predictor + "_"
-                    )
-                ):
-
-                    importance_by_variable[
-                        predictor
-                    ] += importance
-
-                    break
-
-
-        importance_df = pd.DataFrame(
-            {
-                "Variable": list(
-                    importance_by_variable.keys()
-                ),
-                "Importance": list(
-                    importance_by_variable.values()
-                )
-            }
-        )
-
-
-        importance_df = (
-            importance_df
-            .sort_values(
-                "Importance",
-                ascending=False
-            )
-            .reset_index(drop=True)
-        )
-
-
-        # ====================================================
-        # STORE EVERYTHING IN SESSION STATE
-        # ====================================================
+        # ----------------------------------------------------
+        # STORE RESULTS
+        # ----------------------------------------------------
 
         st.session_state.model_built = True
+
+        st.session_state.use_global_optimum = False
 
         st.session_state.model_df = model_df
 
@@ -797,135 +1380,187 @@ if uploaded_file is not None:
         st.session_state.y_train = y_train
         st.session_state.y_test = y_test
 
-        st.session_state.final_pipeline = (
-            final_pipeline
+        st.session_state.numeric_features = (
+            numeric_features
         )
 
-        st.session_state.results_df = (
-            results_df
+        st.session_state.categorical_features = (
+            categorical_features
         )
 
-        st.session_state.best_depth = (
-            best_depth
+        st.session_state.predictors = (
+            predictors
         )
 
-        st.session_state.best_score = (
-            best_score
+        st.session_state.min_samples_leaf_saved = (
+            int(
+                min_samples_leaf
+            )
         )
 
-        st.session_state.metric_name = (
+        st.session_state.min_samples_split_saved = (
+            int(
+                min_samples_split
+            )
+        )
+
+        st.session_state.metric_name_saved = (
             metric_name
         )
 
-        st.session_state.selection_word = (
-            selection_word
+        st.session_state.chosen_cutoff_saved = (
+            float(
+                chosen_cutoff
+            )
         )
 
-        st.session_state.importance_df = (
-            importance_df
+        st.session_state.selected_depth = (
+            selected_depth
         )
 
-        st.session_state.transformed_feature_names = (
-            transformed_feature_names
+        st.session_state.selected_cv_score = (
+            selected_cv_score
         )
 
-        st.session_state.tree_model = (
-            tree_model
+        st.session_state.depth_results_df = (
+            depth_results_df
         )
 
-        st.session_state.min_samples_leaf = (
-            min_samples_leaf
+        st.session_state.cutoff_depth_matrix = (
+            matrix
         )
 
-        st.session_state.min_samples_split = (
-            min_samples_split
+        st.session_state.global_depth = (
+            global_depth
         )
 
-        st.session_state.test_percent = (
-            test_percent
+        st.session_state.global_cutoff = (
+            global_cutoff
+        )
+
+        st.session_state.global_score = (
+            global_score
+        )
+
+        st.session_state.selected_pipeline = (
+            selected_pipeline
+        )
+
+        st.session_state.minimize_metric = (
+            minimize_metric
         )
 
 
 # ============================================================
-# DISPLAY SAVED MODEL RESULTS
+# DISPLAY RESULTS
 # ============================================================
 
 if st.session_state.model_built:
 
-    X_train = st.session_state.X_train
-    X_test = st.session_state.X_test
-
-    y_train = st.session_state.y_train
-    y_test = st.session_state.y_test
-
-    final_pipeline = (
-        st.session_state.final_pipeline
-    )
-
-    results_df = (
-        st.session_state.results_df
-    )
-
-    best_depth = (
-        st.session_state.best_depth
-    )
-
-    best_score = (
-        st.session_state.best_score
-    )
-
     metric_name = (
-        st.session_state.metric_name
+        st.session_state.metric_name_saved
     )
 
-    selection_word = (
-        st.session_state.selection_word
+    chosen_cutoff_saved = (
+        st.session_state.chosen_cutoff_saved
     )
 
-    importance_df = (
-        st.session_state.importance_df
+    selected_depth = (
+        st.session_state.selected_depth
     )
 
-    transformed_feature_names = (
-        st.session_state.transformed_feature_names
+    selected_cv_score = (
+        st.session_state.selected_cv_score
     )
 
-    tree_model = (
-        st.session_state.tree_model
+    depth_results_df = (
+        st.session_state.depth_results_df
     )
 
-    model_df = (
-        st.session_state.model_df
+    matrix = (
+        st.session_state.cutoff_depth_matrix
+    )
+
+    global_depth = (
+        st.session_state.global_depth
+    )
+
+    global_cutoff = (
+        st.session_state.global_cutoff
+    )
+
+    global_score = (
+        st.session_state.global_score
+    )
+
+    minimize_metric = (
+        st.session_state.minimize_metric
+    )
+
+    X_train = (
+        st.session_state.X_train
+    )
+
+    X_test = (
+        st.session_state.X_test
+    )
+
+    y_train = (
+        st.session_state.y_train
+    )
+
+    y_test = (
+        st.session_state.y_test
+    )
+
+    numeric_features = (
+        st.session_state.numeric_features
+    )
+
+    categorical_features = (
+        st.session_state.categorical_features
+    )
+
+    min_samples_leaf_saved = (
+        st.session_state.min_samples_leaf_saved
+    )
+
+    min_samples_split_saved = (
+        st.session_state.min_samples_split_saved
     )
 
 
     # ========================================================
-    # TRAIN / TEST SIZE
+    # SAMPLE SIZES
     # ========================================================
+
+    st.divider()
 
     st.subheader(
         "Training and Testing Samples"
     )
 
-    split_col1, split_col2 = st.columns(2)
+    sample_col1, sample_col2 = (
+        st.columns(2)
+    )
 
-    with split_col1:
+    with sample_col1:
 
         st.metric(
             "Training Observations",
-            len(X_train)
+            f"{len(X_train):,}"
         )
 
-    with split_col2:
+    with sample_col2:
 
         st.metric(
             "Testing Observations",
-            len(X_test)
+            f"{len(X_test):,}"
         )
 
 
     # ========================================================
-    # CROSS-VALIDATION RESULTS
+    # CV LINE GRAPH
     # ========================================================
 
     st.subheader(
@@ -933,89 +1568,222 @@ if st.session_state.model_built:
     )
 
 
-    display_results = (
-        results_df.copy()
-    )
-
-    display_results[
-        metric_name
-    ] = (
-        display_results[
+    graph_y = (
+        depth_results_df[
             metric_name
-        ].round(4)
+        ] * 100
     )
 
 
-    st.dataframe(
-        display_results,
+    cv_fig = go.Figure()
+
+
+    cv_fig.add_trace(
+        go.Scatter(
+            x=depth_results_df[
+                "Tree Depth"
+            ],
+            y=graph_y,
+            mode="lines+markers",
+            name=metric_name,
+            hovertemplate=(
+                "Tree depth: %{x}"
+                "<br>"
+                + metric_name
+                + ": %{y:.2f}%"
+                "<extra></extra>"
+            )
+        )
+    )
+
+
+    cv_fig.add_vline(
+        x=selected_depth,
+        line_dash="dash",
+        line_color="red",
+        line_width=2,
+        annotation_text=(
+            f"Optimal depth = "
+            f"{selected_depth}"
+        ),
+        annotation_position="top"
+    )
+
+
+    cv_fig.update_layout(
+        xaxis_title="Tree Depth",
+        yaxis_title=(
+            f"{metric_name} (%)"
+        ),
+        height=450,
+        margin=dict(
+            l=50,
+            r=30,
+            t=40,
+            b=50
+        )
+    )
+
+
+    st.plotly_chart(
+        cv_fig,
         use_container_width=True
     )
 
 
-    # ========================================================
-    # PERFORMANCE VS DEPTH
-    # ========================================================
+    if minimize_metric:
 
-    st.subheader(
-        f"{metric_name} vs. Tree Depth"
-    )
+        selection_description = (
+            "lowest"
+        )
 
+    else:
 
-    chart_df = (
-        results_df
-        .set_index("Tree Depth")
-    )
-
-
-    st.line_chart(
-        chart_df
-    )
+        selection_description = (
+            "highest"
+        )
 
 
     st.success(
         f"""
-        Optimal tree depth = **{best_depth}**
+At the selected cutoff of **{chosen_cutoff_saved:.2f}**,
+tree depth **{selected_depth}** was selected because it produced
+the **{selection_description} cross-validated {metric_name}**.
 
-        It was selected because tree depth
-        **{best_depth}** produced the **{selection_word}
-        mean cross-validated {metric_name}**
-        across the candidate tree depths.
+Cross-validated {metric_name}: **{selected_cv_score:.2%}**
         """
     )
 
 
-    st.metric(
-        f"Cross-Validated {metric_name}",
-        f"{best_score:.3f}"
+    # ========================================================
+    # CURRENT MODEL
+    # ========================================================
+
+    if (
+        st.session_state.use_global_optimum
+    ):
+
+        active_depth = (
+            global_depth
+        )
+
+        active_cutoff = (
+            global_cutoff
+        )
+
+        active_pipeline = (
+            make_pipeline(
+                active_depth,
+                min_samples_leaf_saved,
+                min_samples_split_saved,
+                numeric_features,
+                categorical_features
+            )
+        )
+
+        active_pipeline.fit(
+            X_train,
+            y_train
+        )
+
+        active_label = (
+            "Globally Optimal "
+            "Depth / Cutoff Combination"
+        )
+
+    else:
+
+        active_depth = (
+            selected_depth
+        )
+
+        active_cutoff = (
+            chosen_cutoff_saved
+        )
+
+        active_pipeline = (
+            st.session_state.selected_pipeline
+        )
+
+        active_label = (
+            "Model Selected at "
+            "Your Classification Cutoff"
+        )
+
+
+    st.subheader(
+        active_label
     )
+
+    model_col1, model_col2 = (
+        st.columns(2)
+    )
+
+    with model_col1:
+
+        st.metric(
+            "Tree Depth",
+            active_depth
+        )
+
+    with model_col2:
+
+        st.metric(
+            "Classification Cutoff",
+            f"{active_cutoff:.2f}"
+        )
 
 
     # ========================================================
-    # SHOW DECISION TREE
+    # INTERACTIVE TREE
     # ========================================================
 
     st.subheader(
-        "Optimal Decision Tree"
+        "Decision Tree"
+    )
+
+    fitted_preprocessor = (
+        active_pipeline
+        .named_steps[
+            "preprocessor"
+        ]
+    )
+
+    transformed_feature_names = (
+        fitted_preprocessor
+        .get_feature_names_out()
+    )
+
+    readable_feature_names = [
+        name
+        .replace(
+            "numeric__",
+            ""
+        )
+        .replace(
+            "categorical__",
+            ""
+        )
+        for name
+        in transformed_feature_names
+    ]
+
+
+    tree_fig = create_tree_figure(
+        active_pipeline,
+        readable_feature_names
     )
 
 
-    fig, ax = plt.subplots(
-        figsize=(20, 10)
+    st.plotly_chart(
+        tree_fig,
+        use_container_width=True
     )
 
-
-    plot_tree(
-        tree_model,
-        feature_names=transformed_feature_names,
-        class_names=["0", "1"],
-        filled=True,
-        rounded=True,
-        proportion=False,
-        ax=ax
+    st.caption(
+        "Hover over a node for details. "
+        "You can zoom and pan the tree."
     )
-
-
-    st.pyplot(fig)
 
 
     # ========================================================
@@ -1027,71 +1795,79 @@ if st.session_state.model_built:
     )
 
 
-    display_importance = (
-        importance_df.copy()
-    )
-
-
-    display_importance[
-        "Importance"
-    ] = (
-        display_importance[
-            "Importance"
-        ].round(4)
-    )
-
-
-    st.dataframe(
-        display_importance,
-        use_container_width=True
-    )
-
-
-    st.bar_chart(
-        display_importance.set_index(
-            "Variable"
+    importance_df = (
+        get_variable_importance(
+            active_pipeline,
+            numeric_features,
+            categorical_features
         )
     )
 
 
-    # ========================================================
-    # CLASSIFICATION CUTOFF
-    # ========================================================
+    importance_fig = go.Figure()
 
-    st.subheader(
-        "Classification Cutoff"
+
+    importance_fig.add_trace(
+        go.Bar(
+            x=importance_df[
+                "Variable"
+            ],
+            y=(
+                importance_df[
+                    "Importance"
+                ] * 100
+            ),
+            text=[
+                f"{value:.2%}"
+                for value
+                in importance_df[
+                    "Importance"
+                ]
+            ],
+            textposition="outside",
+            hovertemplate=(
+                "%{x}<br>"
+                "Importance: %{y:.2f}%"
+                "<extra></extra>"
+            )
+        )
     )
 
 
-    cutoff = st.number_input(
-        "Enter classification cutoff:",
-        min_value=0.00,
-        max_value=1.00,
-        value=0.50,
-        step=0.01,
-        format="%.2f",
-        key="classification_cutoff"
+    importance_fig.update_layout(
+        yaxis_title="Importance (%)",
+        xaxis_title="",
+        height=450,
+        margin=dict(
+            l=50,
+            r=20,
+            t=40,
+            b=70
+        )
     )
 
 
-    st.write(
-        f"""
-        An observation is classified as **1**
-        when its predicted probability is
-        greater than or equal to **{cutoff:.2f}**.
-
-        Otherwise, it is classified as **0**.
-        """
+    st.plotly_chart(
+        importance_fig,
+        use_container_width=True
     )
 
 
     # ========================================================
-    # TRAINING PREDICTIONS
+    # TRAINING / TEST PROBABILITIES
     # ========================================================
 
     train_probabilities = (
-        final_pipeline.predict_proba(
+        active_pipeline
+        .predict_proba(
             X_train
+        )[:, 1]
+    )
+
+    test_probabilities = (
+        active_pipeline
+        .predict_proba(
+            X_test
         )[:, 1]
     )
 
@@ -1100,47 +1876,21 @@ if st.session_state.model_built:
         calculate_metrics(
             y_train,
             train_probabilities,
-            cutoff
+            active_cutoff
         )
     )
-
-
-    train_cm = confusion_matrix(
-        y_train,
-        train_predictions,
-        labels=[0, 1]
-    )
-
-
-    # ========================================================
-    # TEST PREDICTIONS
-    # ========================================================
-
-    test_probabilities = (
-        final_pipeline.predict_proba(
-            X_test
-        )[:, 1]
-    )
-
 
     test_metrics, test_predictions = (
         calculate_metrics(
             y_test,
             test_probabilities,
-            cutoff
+            active_cutoff
         )
     )
 
 
-    test_cm = confusion_matrix(
-        y_test,
-        test_predictions,
-        labels=[0, 1]
-    )
-
-
     # ========================================================
-    # CONFUSION MATRICES
+    # CONFUSION MATRICES WITH TOTALS
     # ========================================================
 
     st.subheader(
@@ -1148,59 +1898,41 @@ if st.session_state.model_built:
     )
 
 
-    cm_col1, cm_col2 = st.columns(2)
+    cm_col1, cm_col2 = (
+        st.columns(2)
+    )
 
 
     with cm_col1:
 
-        st.write(
+        st.markdown(
             "**Training Set**"
         )
 
-        train_cm_df = pd.DataFrame(
-            train_cm,
-            index=[
-                "Actual 0",
-                "Actual 1"
-            ],
-            columns=[
-                "Predicted 0",
-                "Predicted 1"
-            ]
-        )
-
-        st.dataframe(
-            train_cm_df,
-            use_container_width=True
+        st.table(
+            confusion_table(
+                y_train,
+                train_predictions
+            )
         )
 
 
     with cm_col2:
 
-        st.write(
+        st.markdown(
             "**Testing Set**"
         )
 
-        test_cm_df = pd.DataFrame(
-            test_cm,
-            index=[
-                "Actual 0",
-                "Actual 1"
-            ],
-            columns=[
-                "Predicted 0",
-                "Predicted 1"
-            ]
-        )
-
-        st.dataframe(
-            test_cm_df,
-            use_container_width=True
+        st.table(
+            confusion_table(
+                y_test,
+                test_predictions
+            )
         )
 
 
     # ========================================================
-    # PERFORMANCE METRICS
+    # MODEL PERFORMANCE
     # ========================================================
 
     st.subheader(
@@ -1208,89 +1940,358 @@ if st.session_state.model_built:
     )
 
 
+    performance_rows = []
+
+
+    for metric in train_metrics:
+
+        performance_rows.append(
+            {
+                "Metric":
+                    metric,
+                "Training":
+                    f"{train_metrics[metric]:.2%}",
+                "Testing":
+                    f"{test_metrics[metric]:.2%}"
+            }
+        )
+
+
     performance_df = pd.DataFrame(
-        {
-            "Metric": list(
-                train_metrics.keys()
-            ),
-            "Training Set": list(
-                train_metrics.values()
-            ),
-            "Testing Set": [
-                test_metrics[key]
-                for key in train_metrics.keys()
-            ]
-        }
-    )
-
-
-    performance_df[
-        "Training Set"
-    ] = (
-        performance_df[
-            "Training Set"
-        ].round(4)
-    )
-
-
-    performance_df[
-        "Testing Set"
-    ] = (
-        performance_df[
-            "Testing Set"
-        ].round(4)
+        performance_rows
     )
 
 
     st.dataframe(
         performance_df,
+        hide_index=True,
+        use_container_width=False,
+        column_config={
+            "Metric":
+                st.column_config.TextColumn(
+                    width="medium"
+                ),
+            "Training":
+                st.column_config.TextColumn(
+                    width="small"
+                ),
+            "Testing":
+                st.column_config.TextColumn(
+                    width="small"
+                )
+        }
+    )
+
+
+    # ========================================================
+    # CUTOFF × DEPTH ANALYSIS
+    # ========================================================
+
+    st.divider()
+
+    st.header(
+        "Cutoff × Tree Depth Analysis"
+    )
+
+
+    st.write(
+        f"""
+The table and 3D graph below evaluate **{metric_name}**
+using cross-validation on the training data for every
+classification cutoff from **0.00 to 1.00** and every
+tree depth you allowed.
+        """
+    )
+
+
+    if metric_name == "ROC AUC":
+
+        st.info(
+            """
+ROC AUC does not depend on a classification cutoff.
+Therefore, the ROC AUC value is identical across all
+cutoffs for a given tree depth. The optimal depth is
+selected using ROC AUC, while your entered cutoff is
+retained for classification.
+            """
+        )
+
+
+    # --------------------------------------------------------
+    # TABLE
+    # --------------------------------------------------------
+
+    display_matrix = (
+        matrix.copy() * 100
+    )
+
+
+    display_matrix.index = [
+        f"{cutoff:.2f}"
+        for cutoff
+        in display_matrix.index
+    ]
+
+
+    display_matrix.columns = [
+        f"Depth {depth}"
+        for depth
+        in display_matrix.columns
+    ]
+
+
+    formatted_matrix = (
+        display_matrix
+        .map(
+            lambda value:
+                f"{value:.2f}%"
+        )
+    )
+
+
+    formatted_matrix.index.name = (
+        "Cutoff"
+    )
+
+
+    st.subheader(
+        f"{metric_name} by Cutoff and Tree Depth"
+    )
+
+
+    st.dataframe(
+        formatted_matrix,
+        height=500,
         use_container_width=True
     )
 
 
     # ========================================================
-    # EXPORT DATA
+    # 3D SURFACE
     # ========================================================
+
+    st.subheader(
+        "Interactive 3D Performance Surface"
+    )
+
+
+    surface_z = (
+        matrix.values.astype(
+            float
+        ) * 100
+    )
+
+
+    surface_fig = go.Figure()
+
+
+    surface_fig.add_trace(
+        go.Surface(
+            x=np.array(
+                matrix.columns,
+                dtype=float
+            ),
+            y=np.array(
+                matrix.index,
+                dtype=float
+            ),
+            z=surface_z,
+            hovertemplate=(
+                "Tree depth: %{x:.0f}"
+                "<br>Cutoff: %{y:.2f}"
+                "<br>"
+                + metric_name
+                + ": %{z:.2f}%"
+                "<extra></extra>"
+            ),
+            showscale=True
+        )
+    )
+
+
+    surface_fig.add_trace(
+        go.Scatter3d(
+            x=[
+                global_depth
+            ],
+            y=[
+                global_cutoff
+            ],
+            z=[
+                global_score
+                * 100
+            ],
+            mode="markers+text",
+            marker=dict(
+                size=7,
+                color="red"
+            ),
+            text=[
+                "Optimal"
+            ],
+            textposition="top center",
+            hovertemplate=(
+                f"Optimal depth: "
+                f"{global_depth}"
+                f"<br>Optimal cutoff: "
+                f"{global_cutoff:.2f}"
+                f"<br>{metric_name}: "
+                f"{global_score:.2%}"
+                "<extra></extra>"
+            )
+        )
+    )
+
+
+    surface_fig.update_layout(
+        height=650,
+        scene=dict(
+            xaxis_title=(
+                "Tree Depth"
+            ),
+            yaxis_title=(
+                "Classification Cutoff"
+            ),
+            zaxis_title=(
+                f"{metric_name} (%)"
+            )
+        ),
+        margin=dict(
+            l=0,
+            r=0,
+            t=20,
+            b=0
+        ),
+        showlegend=False
+    )
+
+
+    st.plotly_chart(
+        surface_fig,
+        use_container_width=True
+    )
+
+
+    # ========================================================
+    # OPTIMAL COMBINATION
+    # ========================================================
+
+    if metric_name == "ROC AUC":
+
+        st.success(
+            f"""
+**Optimal tree depth:** {global_depth}
+
+**ROC AUC:** {global_score:.2%}
+
+ROC AUC does not identify an optimal classification cutoff,
+so the classification cutoff remains **{global_cutoff:.2f}**.
+            """
+        )
+
+    else:
+
+        optimal_word = (
+            "minimum"
+            if minimize_metric
+            else "maximum"
+        )
+
+        st.success(
+            f"""
+**Globally optimal combination based on cross-validation**
+
+Tree depth: **{global_depth}**
+
+Classification cutoff: **{global_cutoff:.2f}**
+
+{metric_name}: **{global_score:.2%}**
+
+This combination produced the **{optimal_word}**
+cross-validated {metric_name} among all depth/cutoff
+combinations evaluated.
+            """
+        )
+
+
+    # ========================================================
+    # BUTTON TO USE GLOBAL OPTIMUM
+    # ========================================================
+
+    if not (
+        st.session_state.use_global_optimum
+    ):
+
+        if st.button(
+            "Use Optimal Depth and Cutoff for Predictions",
+            type="primary"
+        ):
+
+            st.session_state.use_global_optimum = True
+
+            st.rerun()
+
+    else:
+
+        if st.button(
+            "Return to My Selected Cutoff Model"
+        ):
+
+            st.session_state.use_global_optimum = False
+
+            st.rerun()
+
+
+    # ========================================================
+    # DOWNLOAD PREDICTIONS
+    # ========================================================
+
+    st.divider()
 
     st.subheader(
         "Download Predictions"
     )
 
 
-    train_output = model_df.loc[
-        X_train.index
-    ].copy()
+    model_df = (
+        st.session_state.model_df
+    )
 
+
+    train_output = (
+        model_df.loc[
+            X_train.index
+        ]
+        .copy()
+    )
 
     train_output[
         "Data_Set"
     ] = "Training"
 
-
     train_output[
         "Predicted_Probability"
     ] = train_probabilities
-
 
     train_output[
         "Predicted_Class"
     ] = train_predictions
 
 
-    test_output = model_df.loc[
-        X_test.index
-    ].copy()
-
+    test_output = (
+        model_df.loc[
+            X_test.index
+        ]
+        .copy()
+    )
 
     test_output[
         "Data_Set"
     ] = "Testing"
 
-
     test_output[
         "Predicted_Probability"
     ] = test_probabilities
-
 
     test_output[
         "Predicted_Class"
@@ -1307,8 +2308,11 @@ if st.session_state.model_built:
 
     st.write(
         f"""
-        Predicted classifications in the downloaded
-        file use a cutoff of **{cutoff:.2f}**.
+The downloaded file uses:
+
+**Tree depth:** {active_depth}
+
+**Classification cutoff:** {active_cutoff:.2f}
         """
     )
 
@@ -1321,14 +2325,20 @@ if st.session_state.model_built:
 
     csv = (
         output_df
-        .to_csv(index=False)
-        .encode("utf-8")
+        .to_csv(
+            index=False
+        )
+        .encode(
+            "utf-8"
+        )
     )
 
 
     st.download_button(
-        label="Download Predictions",
+        "Download Predictions",
         data=csv,
-        file_name="decision_tree_predictions.csv",
+        file_name=(
+            "decision_tree_predictions.csv"
+        ),
         mime="text/csv"
     )
