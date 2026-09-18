@@ -11,10 +11,13 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import (
     accuracy_score,
+    balanced_accuracy_score,
     precision_score,
     recall_score,
     f1_score,
     roc_auc_score,
+    average_precision_score,
+    log_loss,
     confusion_matrix,
 )
 
@@ -70,6 +73,11 @@ def calculate_metrics(y_true, probabilities, cutoff):
         predictions
     )
 
+    balanced_accuracy = balanced_accuracy_score(
+        y_true,
+        predictions
+    )
+
     misclassification = 1 - accuracy
 
     precision = precision_score(
@@ -110,11 +118,31 @@ def calculate_metrics(y_true, probabilities, cutoff):
     except ValueError:
         roc_auc = np.nan
 
+    try:
+        pr_auc = average_precision_score(
+            y_true,
+            probabilities
+        )
+    except ValueError:
+        pr_auc = np.nan
+
+    try:
+        probability_log_loss = log_loss(
+            y_true,
+            probabilities,
+            labels=[0, 1]
+        )
+    except ValueError:
+        probability_log_loss = np.nan
+
     metrics = {
         "Accuracy": accuracy,
+        "Balanced Accuracy": balanced_accuracy,
         "Misclassification Error": misclassification,
         "F1 Score": f1,
         "ROC AUC": roc_auc,
+        "PR AUC": pr_auc,
+        "Log Loss": probability_log_loss,
         "False Positive Rate": false_positive_rate,
         "False Negative Rate": false_negative_rate,
         "Recall": recall,
@@ -128,8 +156,28 @@ def metric_value(
     y_true,
     probabilities,
     cutoff,
-    metric_name
+    metric_name,
+    business_values=None
 ):
+
+    if metric_name == "Business Value":
+
+        predictions = (
+            probabilities >= cutoff
+        ).astype(int)
+
+        tn, fp, fn, tp = confusion_matrix(
+            y_true,
+            predictions,
+            labels=[0, 1]
+        ).ravel()
+
+        return (
+            tp * business_values["TP"]
+            + fp * business_values["FP"]
+            + fn * business_values["FN"]
+            + tn * business_values["TN"]
+        )
 
     metrics, _ = calculate_metrics(
         y_true,
@@ -138,6 +186,25 @@ def metric_value(
     )
 
     return metrics[metric_name]
+
+
+def metric_is_percentage(metric_name):
+
+    return metric_name not in {
+        "Business Value",
+        "Log Loss"
+    }
+
+
+def format_metric_value(value, metric_name):
+
+    if pd.isna(value):
+        return "N/A"
+
+    if metric_is_percentage(metric_name):
+        return f"{value:.2%}"
+
+    return f"{value:,.4f}"
 
 
 def make_preprocessor(
@@ -770,11 +837,11 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # 3. TRAIN / TEST
+    # 3. TRAIN / TEST / CROSS-VALIDATION
     # ========================================================
 
     st.subheader(
-        "3. Select Training and Testing Split"
+        "3. Configure Training, Testing, and Cross-Validation"
     )
 
     test_percent = st.selectbox(
@@ -785,6 +852,22 @@ if uploaded_file is not None:
             40
         ],
         index=1
+    )
+
+
+    cv_folds = st.selectbox(
+        "Number of cross-validation folds:",
+        options=[
+            3,
+            5,
+            10
+        ],
+        index=1
+    )
+
+    st.caption(
+        "Cross-validation is performed only within the training data. "
+        "The testing data is reserved for the final model evaluation."
     )
 
 
@@ -853,20 +936,24 @@ if uploaded_file is not None:
 
 
     # ========================================================
-    # 6. METRIC
+    # 6. MODEL-SELECTION OBJECTIVE
     # ========================================================
 
     st.subheader(
-        "6. Select Model-Selection Metric"
+        "6. Select Model-Selection Objective"
     )
 
     metric_name = st.selectbox(
-        "Metric used to evaluate tree performance:",
+        "Objective used to select the tree:",
         options=[
+            "Business Value",
             "Accuracy",
+            "Balanced Accuracy",
             "Misclassification Error",
             "F1 Score",
             "ROC AUC",
+            "PR AUC",
+            "Log Loss",
             "False Positive Rate",
             "False Negative Rate",
             "Recall",
@@ -875,15 +962,172 @@ if uploaded_file is not None:
     )
 
 
-    cv_folds = st.selectbox(
-        "Number of cross-validation folds:",
-        options=[
-            3,
-            5,
-            10
-        ],
-        index=1
+    metric_explanations = {
+        "Business Value": (
+            "Uses the value assigned to each true positive, false positive, "
+            "false negative, and true negative. The app selects the model "
+            "that maximizes total payoff or minimizes total cost."
+        ),
+        "Accuracy": (
+            "Percentage of observations whose predicted class matches "
+            "their actual class. Accuracy can be misleading when one "
+            "outcome is much more common than the other."
+        ),
+        "Balanced Accuracy": (
+            "Average of the percentage of actual 1s correctly predicted "
+            "and the percentage of actual 0s correctly predicted. It gives "
+            "the two actual classes equal importance."
+        ),
+        "Misclassification Error": (
+            "Percentage of observations whose predicted class does not "
+            "match the actual class."
+        ),
+        "F1 Score": (
+            "Harmonic mean of precision and recall. It balances finding "
+            "actual 1s with limiting incorrect predictions of 1."
+        ),
+        "ROC AUC": (
+            "Measures how well the model ranks actual 1s above actual 0s "
+            "across all possible cutoffs. It does not select a cutoff."
+        ),
+        "PR AUC": (
+            "Summarizes the tradeoff between precision and recall across "
+            "possible cutoffs. It is often useful when class 1 is uncommon."
+        ),
+        "Log Loss": (
+            "Evaluates predicted probabilities and penalizes confident "
+            "incorrect predictions. Lower values are better, and it does "
+            "not select a cutoff."
+        ),
+        "False Positive Rate": (
+            "Of the actual 0s, the percentage incorrectly predicted as 1."
+        ),
+        "False Negative Rate": (
+            "Of the actual 1s, the percentage incorrectly predicted as 0."
+        ),
+        "Recall": (
+            "Of the actual 1s, the percentage correctly predicted as 1."
+        ),
+        "Precision": (
+            "Of observations predicted as 1, the percentage that are "
+            "actually 1."
+        )
+    }
+
+    st.info(
+        f"**{metric_name}:** "
+        f"{metric_explanations[metric_name]}"
     )
+
+
+    if metric_name == "Business Value":
+
+        st.markdown(
+            "**Define the Cost-Benefit Matrix**"
+        )
+
+        st.caption(
+            "Enter the expected financial impact associated with each "
+            "actual–predicted outcome."
+        )
+
+        st.caption(
+            "Each value should represent one prediction decision—for "
+            "example, one customer, flight, booking, transaction, or machine."
+        )
+
+        st.caption(
+            "Positive class refers to class 1 and negative class refers to "
+            "class 0; these labels do not indicate whether the financial "
+            "impact is favorable or unfavorable."
+        )
+
+        value_header_1, value_header_2, value_header_3 = st.columns(
+            [1.35, 1, 1]
+        )
+
+        with value_header_2:
+            st.markdown("**Predicted 0**  ")
+            st.caption("Negative class")
+
+        with value_header_3:
+            st.markdown("**Predicted 1**  ")
+            st.caption("Positive class")
+
+        actual_0_label, tn_column, fp_column = st.columns(
+            [1.35, 1, 1]
+        )
+
+        with actual_0_label:
+            st.markdown("**Actual 0**  ")
+            st.caption("Negative class")
+
+        with tn_column:
+            tn_value = st.number_input(
+                "True Negative (TN)",
+                value=1.00,
+                step=0.50,
+                format="%.2f"
+            )
+
+        with fp_column:
+            fp_value = st.number_input(
+                "False Positive (FP)",
+                value=0.00,
+                step=0.50,
+                format="%.2f"
+            )
+
+        actual_1_label, fn_column, tp_column = st.columns(
+            [1.35, 1, 1]
+        )
+
+        with actual_1_label:
+            st.markdown("**Actual 1**  ")
+            st.caption("Positive class")
+
+        with fn_column:
+            fn_value = st.number_input(
+                "False Negative (FN)",
+                value=0.00,
+                step=0.50,
+                format="%.2f"
+            )
+
+        with tp_column:
+            tp_value = st.number_input(
+                "True Positive (TP)",
+                value=1.00,
+                step=0.50,
+                format="%.2f"
+            )
+
+        optimization_direction = st.radio(
+            "Optimization direction:",
+            options=[
+                "Maximize payoff or profit",
+                "Minimize cost or loss"
+            ],
+            horizontal=True
+        )
+
+        business_values = {
+            "TP": float(tp_value),
+            "FP": float(fp_value),
+            "FN": float(fn_value),
+            "TN": float(tn_value)
+        }
+
+    else:
+
+        business_values = {
+            "TP": 0.0,
+            "FP": 0.0,
+            "FN": 0.0,
+            "TN": 0.0
+        }
+
+        optimization_direction = ""
 
 
     # ========================================================
@@ -908,31 +1152,6 @@ if uploaded_file is not None:
         "when its predicted probability is "
         "greater than or equal to the cutoff."
     )
-
-
-    with st.expander(
-        "What do the performance metrics mean?"
-    ):
-
-        st.markdown(
-            """
-**Accuracy:** Percentage of all observations classified correctly.
-
-**Misclassification Error:** Percentage of observations classified incorrectly.
-
-**F1 Score:** Balances precision and recall.
-
-**ROC AUC:** Measures how well the model ranks class 1 above class 0 across all possible cutoffs.
-
-**False Positive Rate:** Of the actual 0s, the percentage incorrectly classified as 1.
-
-**False Negative Rate:** Of the actual 1s, the percentage incorrectly classified as 0.
-
-**Recall:** Of the actual 1s, the percentage correctly identified as 1.
-
-**Precision:** Of observations predicted as 1, the percentage that are actually 1.
-            """
-        )
 
 
     # ========================================================
@@ -1164,7 +1383,8 @@ if uploaded_file is not None:
                     y_train.index
                 ].values,
                 chosen_cutoff,
-                metric_name
+                metric_name,
+                business_values
             )
 
 
@@ -1186,14 +1406,24 @@ if uploaded_file is not None:
         metrics_to_minimize = {
             "Misclassification Error",
             "False Positive Rate",
-            "False Negative Rate"
+            "False Negative Rate",
+            "Log Loss"
         }
 
 
-        minimize_metric = (
-            metric_name
-            in metrics_to_minimize
-        )
+        if metric_name == "Business Value":
+
+            minimize_metric = (
+                optimization_direction
+                == "Minimize cost or loss"
+            )
+
+        else:
+
+            minimize_metric = (
+                metric_name
+                in metrics_to_minimize
+            )
 
 
         if minimize_metric:
@@ -1259,7 +1489,8 @@ if uploaded_file is not None:
                     y_train,
                     probabilities,
                     float(cutoff),
-                    metric_name
+                    metric_name,
+                    business_values
                 )
 
 
@@ -1267,25 +1498,40 @@ if uploaded_file is not None:
         # GLOBAL OPTIMAL DEPTH + CUTOFF
         # ----------------------------------------------------
 
-        if metric_name == "ROC AUC":
+        cutoff_independent_metrics = {
+            "ROC AUC",
+            "PR AUC",
+            "Log Loss"
+        }
 
-            # ROC AUC does not depend on cutoff.
+
+        if metric_name in cutoff_independent_metrics:
+
+            # These metrics do not depend on cutoff.
             # Optimize depth only and retain user's chosen cutoff.
 
-            depth_auc = (
+            depth_scores = (
                 matrix.iloc[0]
             )
 
-            global_depth = int(
-                depth_auc.idxmax()
-            )
+            if minimize_metric:
+
+                global_depth = int(
+                    depth_scores.idxmin()
+                )
+
+            else:
+
+                global_depth = int(
+                    depth_scores.idxmax()
+                )
 
             global_cutoff = float(
                 chosen_cutoff
             )
 
             global_score = float(
-                depth_auc.loc[
+                depth_scores.loc[
                     global_depth
                 ]
             )
@@ -1408,6 +1654,14 @@ if uploaded_file is not None:
             metric_name
         )
 
+        st.session_state.business_values_saved = (
+            business_values
+        )
+
+        st.session_state.optimization_direction_saved = (
+            optimization_direction
+        )
+
         st.session_state.chosen_cutoff_saved = (
             float(
                 chosen_cutoff
@@ -1459,6 +1713,14 @@ if st.session_state.model_built:
 
     metric_name = (
         st.session_state.metric_name_saved
+    )
+
+    business_values = (
+        st.session_state.business_values_saved
+    )
+
+    optimization_direction = (
+        st.session_state.optimization_direction_saved
     )
 
     chosen_cutoff_saved = (
@@ -1568,11 +1830,27 @@ if st.session_state.model_built:
     )
 
 
-    graph_y = (
-        depth_results_df[
+    if metric_is_percentage(metric_name):
+
+        graph_y = (
+            depth_results_df[
+                metric_name
+            ] * 100
+        )
+
+        graph_suffix = "%"
+
+        graph_hover_format = ".2f"
+
+    else:
+
+        graph_y = depth_results_df[
             metric_name
-        ] * 100
-    )
+        ]
+
+        graph_suffix = ""
+
+        graph_hover_format = ",.4f"
 
 
     cv_fig = go.Figure()
@@ -1590,8 +1868,11 @@ if st.session_state.model_built:
                 "Tree depth: %{x}"
                 "<br>"
                 + metric_name
-                + ": %{y:.2f}%"
-                "<extra></extra>"
+                + ": %{y:"
+                + graph_hover_format
+                + "}"
+                + graph_suffix
+                + "<extra></extra>"
             )
         )
     )
@@ -1613,7 +1894,12 @@ if st.session_state.model_built:
     cv_fig.update_layout(
         xaxis_title="Tree Depth",
         yaxis_title=(
-            f"{metric_name} (%)"
+            f"{metric_name}"
+            + (
+                " (%)"
+                if metric_is_percentage(metric_name)
+                else ""
+            )
         ),
         height=450,
         margin=dict(
@@ -1650,7 +1936,7 @@ At the selected cutoff of **{chosen_cutoff_saved:.2f}**,
 tree depth **{selected_depth}** was selected because it produced
 the **{selection_description} cross-validated {metric_name}**.
 
-Cross-validated {metric_name}: **{selected_cv_score:.2%}**
+Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_name)}**
         """
     )
 
@@ -1931,6 +2217,55 @@ Cross-validated {metric_name}: **{selected_cv_score:.2%}**
         )
 
 
+    if metric_name == "Business Value":
+
+        train_business_value = metric_value(
+            y_train,
+            train_probabilities,
+            active_cutoff,
+            "Business Value",
+            business_values
+        )
+
+        test_business_value = metric_value(
+            y_test,
+            test_probabilities,
+            active_cutoff,
+            "Business Value",
+            business_values
+        )
+
+        st.subheader(
+            "Business Performance"
+        )
+
+        business_col1, business_col2 = st.columns(2)
+
+        with business_col1:
+
+            st.metric(
+                "Training Total Business Value",
+                f"{train_business_value:,.2f}"
+            )
+
+            st.caption(
+                "Per observation: "
+                f"{train_business_value / len(y_train):,.4f}"
+            )
+
+        with business_col2:
+
+            st.metric(
+                "Testing Total Business Value",
+                f"{test_business_value:,.2f}"
+            )
+
+            st.caption(
+                "Per observation: "
+                f"{test_business_value / len(y_test):,.4f}"
+            )
+
+
     # ========================================================
     # MODEL PERFORMANCE
     # ========================================================
@@ -1950,9 +2285,15 @@ Cross-validated {metric_name}: **{selected_cv_score:.2%}**
                 "Metric":
                     metric,
                 "Training":
-                    f"{train_metrics[metric]:.2%}",
+                    format_metric_value(
+                        train_metrics[metric],
+                        metric
+                    ),
                 "Testing":
-                    f"{test_metrics[metric]:.2%}"
+                    format_metric_value(
+                        test_metrics[metric],
+                        metric
+                    )
             }
         )
 
@@ -2004,16 +2345,21 @@ tree depth you allowed.
     )
 
 
-    if metric_name == "ROC AUC":
+    cutoff_independent_metrics = {
+        "ROC AUC",
+        "PR AUC",
+        "Log Loss"
+    }
+
+
+    if metric_name in cutoff_independent_metrics:
 
         st.info(
-            """
-ROC AUC does not depend on a classification cutoff.
-Therefore, the ROC AUC value is identical across all
-cutoffs for a given tree depth. The optimal depth is
-selected using ROC AUC, while your entered cutoff is
-retained for classification.
-            """
+            f"{metric_name} does not depend on a classification cutoff. "
+            f"Therefore, {metric_name} is identical across all cutoffs "
+            "for a given tree depth. The optimal depth is selected using "
+            f"{metric_name}, while your entered cutoff is retained for "
+            "classification."
         )
 
 
@@ -2021,9 +2367,13 @@ retained for classification.
     # TABLE
     # --------------------------------------------------------
 
-    display_matrix = (
-        matrix.copy() * 100
-    )
+    if metric_is_percentage(metric_name):
+
+        display_matrix = matrix.copy() * 100
+
+    else:
+
+        display_matrix = matrix.copy()
 
 
     display_matrix.index = [
@@ -2040,13 +2390,17 @@ retained for classification.
     ]
 
 
-    formatted_matrix = (
-        display_matrix
-        .map(
-            lambda value:
-                f"{value:.2f}%"
+    if metric_is_percentage(metric_name):
+
+        formatted_matrix = display_matrix.map(
+            lambda value: f"{value:.2f}%"
         )
-    )
+
+    else:
+
+        formatted_matrix = display_matrix.map(
+            lambda value: f"{value:,.4f}"
+        )
 
 
     formatted_matrix.index.name = (
@@ -2075,11 +2429,27 @@ retained for classification.
     )
 
 
-    surface_z = (
-        matrix.values.astype(
-            float
-        ) * 100
-    )
+    surface_z = matrix.values.astype(float)
+
+    if metric_is_percentage(metric_name):
+        surface_z = surface_z * 100
+
+
+    if metric_is_percentage(metric_name):
+
+        surface_hover_value = "%{z:.2f}%"
+
+        surface_z_title = f"{metric_name} (%)"
+
+        optimal_surface_z = global_score * 100
+
+    else:
+
+        surface_hover_value = "%{z:,.4f}"
+
+        surface_z_title = metric_name
+
+        optimal_surface_z = global_score
 
 
     surface_fig = go.Figure()
@@ -2101,8 +2471,9 @@ retained for classification.
                 "<br>Cutoff: %{y:.2f}"
                 "<br>"
                 + metric_name
-                + ": %{z:.2f}%"
-                "<extra></extra>"
+                + ": "
+                + surface_hover_value
+                + "<extra></extra>"
             ),
             showscale=True
         )
@@ -2118,8 +2489,7 @@ retained for classification.
                 global_cutoff
             ],
             z=[
-                global_score
-                * 100
+                optimal_surface_z
             ],
             mode="markers+text",
             marker=dict(
@@ -2136,7 +2506,7 @@ retained for classification.
                 f"<br>Optimal cutoff: "
                 f"{global_cutoff:.2f}"
                 f"<br>{metric_name}: "
-                f"{global_score:.2%}"
+                f"{format_metric_value(global_score, metric_name)}"
                 "<extra></extra>"
             )
         )
@@ -2153,7 +2523,7 @@ retained for classification.
                 "Classification Cutoff"
             ),
             zaxis_title=(
-                f"{metric_name} (%)"
+                surface_z_title
             )
         ),
         margin=dict(
@@ -2176,15 +2546,15 @@ retained for classification.
     # OPTIMAL COMBINATION
     # ========================================================
 
-    if metric_name == "ROC AUC":
+    if metric_name in cutoff_independent_metrics:
 
         st.success(
             f"""
 **Optimal tree depth:** {global_depth}
 
-**ROC AUC:** {global_score:.2%}
+**{metric_name}:** {format_metric_value(global_score, metric_name)}
 
-ROC AUC does not identify an optimal classification cutoff,
+{metric_name} does not identify an optimal classification cutoff,
 so the classification cutoff remains **{global_cutoff:.2f}**.
             """
         )
@@ -2205,7 +2575,7 @@ Tree depth: **{global_depth}**
 
 Classification cutoff: **{global_cutoff:.2f}**
 
-{metric_name}: **{global_score:.2%}**
+{metric_name}: **{format_metric_value(global_score, metric_name)}**
 
 This combination produced the **{optimal_word}**
 cross-validated {metric_name} among all depth/cutoff
