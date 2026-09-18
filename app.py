@@ -471,6 +471,126 @@ def confusion_matrix_html(title, y_true, predictions):
         predictions
     )
 
+
+def create_cross_validation_diagram(
+    fold_results,
+    metric_name,
+    pooled_score
+):
+
+    number_of_folds = len(fold_results)
+    figure = go.Figure()
+
+    training_color = "#BFD7EE"
+    validation_color = "#F6A13A"
+
+    for row_position, fold_result in enumerate(fold_results):
+
+        y_position = number_of_folds - row_position
+
+        figure.add_annotation(
+            x=-0.15,
+            y=y_position,
+            text=f"Round {fold_result['Fold']}",
+            showarrow=False,
+            xanchor="right",
+            font=dict(size=13)
+        )
+
+        for fold_position in range(1, number_of_folds + 1):
+
+            is_validation = fold_position == fold_result["Fold"]
+
+            figure.add_shape(
+                type="rect",
+                x0=fold_position - 1,
+                x1=fold_position - 0.08,
+                y0=y_position - 0.32,
+                y1=y_position + 0.32,
+                line=dict(color="#3A3A3A", width=1.2),
+                fillcolor=(
+                    validation_color
+                    if is_validation
+                    else training_color
+                )
+            )
+
+            figure.add_annotation(
+                x=fold_position - 0.54,
+                y=y_position,
+                text=(
+                    "Validate"
+                    if is_validation
+                    else "Train"
+                ),
+                showarrow=False,
+                font=dict(size=11)
+            )
+
+        fold_value = format_metric_value(
+            fold_result["Value"],
+            metric_name
+        )
+
+        contribution_label = (
+            "Validation contribution"
+            if metric_name == "Business Value"
+            else "Validation result"
+        )
+
+        figure.add_annotation(
+            x=number_of_folds + 0.25,
+            y=y_position,
+            text=f"{contribution_label}: <b>{fold_value}</b>",
+            showarrow=False,
+            xanchor="left",
+            font=dict(size=12)
+        )
+
+    total_label = (
+        "Pooled out-of-fold total"
+        if metric_name == "Business Value"
+        else "Pooled out-of-fold result"
+    )
+
+    figure.add_annotation(
+        x=number_of_folds / 2 - 0.04,
+        y=number_of_folds + 0.9,
+        text="Training data divided into folds",
+        showarrow=False,
+        font=dict(size=14)
+    )
+
+    figure.add_annotation(
+        x=number_of_folds + 0.25,
+        y=number_of_folds + 0.9,
+        text=(
+            f"<b>{total_label}: "
+            f"{format_metric_value(pooled_score, metric_name)}</b>"
+        ),
+        showarrow=False,
+        xanchor="left",
+        font=dict(size=14, color="#A94D00")
+    )
+
+    figure.update_layout(
+        height=max(330, 68 * number_of_folds + 95),
+        margin=dict(l=85, r=25, t=55, b=20),
+        xaxis=dict(
+            visible=False,
+            range=[-1.2, number_of_folds + 4.2]
+        ),
+        yaxis=dict(
+            visible=False,
+            range=[0.25, number_of_folds + 1.25]
+        ),
+        showlegend=False,
+        plot_bgcolor="white",
+        paper_bgcolor="white"
+    )
+
+    return figure
+
     rows = []
 
     for row_label in [
@@ -1016,38 +1136,38 @@ if uploaded_file is not None:
         "3. Configure Training, Testing, and Cross-Validation"
     )
 
-    split_control, _ = st.columns(
-        [1, 4]
+    test_column, folds_column, seed_column, _ = st.columns(
+        [0.9, 0.7, 0.7, 7.7]
     )
 
-    with split_control:
-
+    with test_column:
         test_percent_input = st.text_input(
-            "Percentage of observations used for testing:",
+            "Testing percentage",
             value="",
-            placeholder="e.g., 30"
+            placeholder="30"
         )
 
-
+    with folds_column:
         cv_folds_input = st.text_input(
-            "Number of cross-validation folds:",
+            "CV folds",
             value="",
-            placeholder="e.g., 5"
+            placeholder="5"
         )
 
-
+    with seed_column:
         random_seed_input = st.text_input(
-            "Random seed for reproducibility:",
+            "Random seed",
             value="",
-            placeholder="e.g., 42"
+            placeholder="42"
         )
 
-    st.write(
-        "Cross-validation is performed only within the training data. "
-        "The testing data is reserved for the final model evaluation. "
+    st.markdown(
+        "Cross-validation is performed only within the training data.<br>"
+        "The testing data is reserved for the final model evaluation.<br>"
         "The random seed fixes the training/testing split and "
         "cross-validation folds so the same data and settings reproduce "
-        "the same results."
+        "the same results.",
+        unsafe_allow_html=True
     )
 
 
@@ -1073,16 +1193,14 @@ if uploaded_file is not None:
 
             min_depth_input = st.text_input(
                 "Minimum tree depth",
-                value="",
-                placeholder="e.g., 1"
+                value="1"
             )
 
         with depth_col2:
 
             max_depth_input = st.text_input(
                 "Maximum tree depth",
-                value="",
-                placeholder="e.g., 10"
+                value="10"
             )
 
 
@@ -1094,30 +1212,30 @@ if uploaded_file is not None:
         "5. Tree Constraints"
     )
 
-    constraint_control, _ = st.columns(
-        [1, 4]
+    leaf_group, constraint_gap, split_group, _ = st.columns(
+        [2.6, 0.35, 3.0, 6.05]
     )
 
-    with constraint_control:
-
-        constraint_col1, constraint_col2 = (
-            st.columns(2)
-        )
-
-        with constraint_col1:
-
+    with leaf_group:
+        st.markdown("**Minimum observations in a terminal leaf**")
+        leaf_input_column, _ = st.columns([1, 1])
+        with leaf_input_column:
             min_samples_leaf_input = st.text_input(
                 "Minimum observations in a terminal leaf",
                 value="",
-                placeholder="e.g., 10"
+                placeholder="10",
+                label_visibility="collapsed"
             )
 
-        with constraint_col2:
-
+    with split_group:
+        st.markdown("**Minimum observations required to split a node**")
+        split_input_column, _ = st.columns([1, 1])
+        with split_input_column:
             min_samples_split_input = st.text_input(
                 "Minimum observations required to split a node",
                 value="",
-                placeholder="e.g., 20"
+                placeholder="20",
+                label_visibility="collapsed"
             )
 
 
@@ -1695,6 +1813,13 @@ if uploaded_file is not None:
             random_state=int(random_seed)
         )
 
+        cv_splits = list(
+            cv.split(
+                X_train,
+                y_train
+            )
+        )
+
 
         depths = list(
             range(
@@ -1732,10 +1857,7 @@ if uploaded_file is not None:
             )
 
 
-            for train_index, validation_index in cv.split(
-                X_train,
-                y_train
-            ):
+            for train_index, validation_index in cv_splits:
 
                 X_cv_train = (
                     X_train.iloc[
@@ -1880,6 +2002,35 @@ if uploaded_file is not None:
                 metric_name
             ]
         )
+
+        selected_fold_results = []
+
+        for fold_number, (_, validation_index) in enumerate(
+            cv_splits,
+            start=1
+        ):
+
+            validation_rows = X_train.index[
+                validation_index
+            ]
+
+            fold_value = metric_value(
+                y_train.loc[validation_rows],
+                oof_probabilities[
+                    selected_depth
+                ].loc[validation_rows].values,
+                chosen_cutoff,
+                metric_name,
+                business_values
+            )
+
+            selected_fold_results.append(
+                {
+                    "Fold": fold_number,
+                    "Observations": len(validation_rows),
+                    "Value": float(fold_value)
+                }
+            )
 
 
         # ----------------------------------------------------
@@ -2108,6 +2259,10 @@ if uploaded_file is not None:
             selected_cv_score
         )
 
+        st.session_state.selected_fold_results = (
+            selected_fold_results
+        )
+
         st.session_state.depth_results_df = (
             depth_results_df
         )
@@ -2177,6 +2332,10 @@ if st.session_state.model_built:
 
     selected_cv_score = (
         st.session_state.selected_cv_score
+    )
+
+    selected_fold_results = (
+        st.session_state.selected_fold_results
     )
 
     depth_results_df = (
@@ -2325,6 +2484,41 @@ if st.session_state.model_built:
         "depth or cutoff."
     )
 
+    st.subheader(
+        "How Out-of-Fold Validation Results Are Pooled"
+    )
+
+    if metric_name == "Business Value":
+        st.write(
+            "Blue segments fit the model; the orange segment evaluates it. "
+            "Every training observation appears in an orange validation "
+            "segment exactly once. The financial contributions from those "
+            "non-overlapping segments are added to obtain the pooled "
+            "out-of-fold total shown on the right."
+        )
+    else:
+        st.write(
+            "Blue segments fit the model; the orange segment evaluates it. "
+            "Every training observation appears in an orange validation "
+            "segment exactly once. Those predictions are then pooled to "
+            f"calculate the out-of-fold {metric_name}."
+        )
+
+    cv_diagram = create_cross_validation_diagram(
+        selected_fold_results,
+        metric_name,
+        selected_cv_score
+    )
+
+    st.plotly_chart(
+        cv_diagram,
+        use_container_width=True
+    )
+
+    st.subheader(
+        f"Selecting Tree Depth Using {metric_name}"
+    )
+
 
     if metric_is_percentage(metric_name):
 
@@ -2460,24 +2654,13 @@ if st.session_state.model_built:
                 "Pooled Out-of-Fold Total Cost/Loss (Training Data)"
             )
 
-            cv_average_label = (
-                "Average Cost/Loss per Cross-Validated Prediction"
-            )
-
         else:
 
             cv_result_label = (
                 "Pooled Out-of-Fold Total Business Value (Training Data)"
             )
 
-            cv_average_label = (
-                "Average Business Value per Cross-Validated Prediction"
-            )
-
-        cv_average_line = (
-            f"\n\n{cv_average_label}: "
-            f"**{selected_cv_score / len(y_train):,.2f}**"
-        )
+        cv_average_line = ""
 
     else:
 
@@ -2505,10 +2688,7 @@ the **{selection_description} pooled out-of-fold {metric_name} on the training d
         f"{cv_folds_saved}-fold cross-validation, the validation partitions "
         "do not overlap and together cover the entire training set, so each "
         "training observation contributes once while excluded from model "
-        "fitting. It is **not** the final testing-set result and it is "
-        "**not** the average of the fold totals. Final testing performance "
-        "appears later under Business Performance and Model Performance "
-        "Metrics."
+        "fitting."
     )
 
 
@@ -2681,18 +2861,21 @@ the **{selection_description} pooled out-of-fold {metric_name} on the training d
     )
 
     st.write(
-        "Variable Importance is based on the tree's reductions in Gini "
-        "impurity when it creates splits; it is not based on the selected "
-        "performance measure or the Cost-Benefit Matrix. The percentages "
-        "sum to 100%. For example, 20% means the variable accounted for "
-        "about 20% of the fitted tree's total improvement in separating "
-        "class 0 from class 1. It does not mean that profit, Business Value, "
-        "or accuracy increased by 20%. A value of 0% means the final tree "
-        "did not use that variable in a split. This does not prove that the "
-        "variable has no predictive value, because another correlated "
-        "variable may have been selected instead. Importance also does not "
-        "show whether an effect is positive or negative and does not "
-        "establish causation."
+        "Variable Importance is based on reductions in Gini impurity. In "
+        "practical terms, Gini impurity measures how mixed class 0 and class "
+        "1 are within a group of observations: it is lowest when everyone "
+        "in the group belongs to the same class. A variable receives "
+        "importance when the tree uses it to create child groups that are "
+        "less mixed, or more clearly separated, than the parent group. The "
+        "percentages show each variable's share of all such improvements in "
+        "the fitted tree and sum to 100%. Thus, 20% means that splits using "
+        "the variable produced about 20% of the tree's total reduction in "
+        "class mixing. It does not mean that the variable increased profit, "
+        "Business Value, or accuracy by 20%. A value of 0% means the final "
+        "tree did not use that variable in a split. A variable can still be "
+        "predictive but receive little or no importance when a correlated "
+        "variable is chosen instead. Importance does not show whether an "
+        "effect is positive or negative and does not establish causation."
     )
 
 
@@ -2864,7 +3047,7 @@ the **{selection_description} pooled out-of-fold {metric_name} on the training d
                     test_baseline_value - test_business_value
                 )
 
-                baseline_column_label = "Baseline Cost/Loss"
+                baseline_column_label = "Historical Baseline Cost/Loss"
 
                 model_column_label = "Model Cost/Loss"
 
@@ -2882,7 +3065,7 @@ the **{selection_description} pooled out-of-fold {metric_name} on the training d
                     test_business_value - test_baseline_value
                 )
 
-                baseline_column_label = "Baseline Business Value"
+                baseline_column_label = "Historical Baseline Business Value"
 
                 model_column_label = "Model Business Value"
 
@@ -2944,17 +3127,23 @@ the **{selection_description} pooled out-of-fold {metric_name} on the training d
             if minimizing_business_cost:
 
                 st.write(
-                    "Baseline Cost/Loss represents the expected amount "
-                    "without using the model. Cost Savings equals Baseline "
-                    "Cost/Loss minus Model Cost/Loss."
+                    "Historical Baseline Cost/Loss uses the known actual "
+                    "outcome for every observation and the baseline amount "
+                    "entered for Actual 0 or Actual 1. It estimates the "
+                    "total cost or loss under the existing no-model policy. "
+                    "Cost Savings equals Historical Baseline Cost/Loss "
+                    "minus Model Cost/Loss."
                 )
 
             else:
 
                 st.write(
-                    "Baseline Business Value represents the expected value "
-                    "without using the model. Business Value Added equals "
-                    "Model Business Value minus Baseline Business Value."
+                    "Historical Baseline Business Value uses the known "
+                    "actual outcome for every observation and the baseline "
+                    "amount entered for Actual 0 or Actual 1. It estimates "
+                    "the total value under the existing no-model policy. "
+                    "Business Value Added equals Model Business Value minus "
+                    "Historical Baseline Business Value."
                 )
 
             st.markdown(
@@ -3532,11 +3721,11 @@ combinations evaluated.
     ] = "Training"
 
     train_output[
-        "Predicted_Probability_of_1_Selected_Model"
+        "Predicted_Probability_of_1"
     ] = selected_train_probabilities
 
     selected_class_column = (
-        "Predicted_Class_Selected_Cutoff_"
+        "Predicted_Class_Cutoff_"
         f"{chosen_cutoff_saved:.2f}"
     )
 
@@ -3570,7 +3759,7 @@ combinations evaluated.
     ] = "Testing"
 
     test_output[
-        "Predicted_Probability_of_1_Selected_Model"
+        "Predicted_Probability_of_1"
     ] = selected_test_probabilities
 
     test_output[
@@ -3589,7 +3778,7 @@ combinations evaluated.
     if metric_name == "Business Value":
 
         train_output[
-            "Business_Value_Selected_Model"
+            "Business_Value"
         ] = business_value_per_prediction(
             y_train.values,
             selected_train_predictions,
@@ -3597,7 +3786,7 @@ combinations evaluated.
         )
 
         test_output[
-            "Business_Value_Selected_Model"
+            "Business_Value"
         ] = business_value_per_prediction(
             y_test.values,
             selected_test_predictions,
