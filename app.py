@@ -125,7 +125,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.title("Decision Tree Model Builder")
+st.title("Financially Optimized Decision Tree Predictive Modeler")
 
 st.write(
     """
