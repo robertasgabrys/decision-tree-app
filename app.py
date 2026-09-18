@@ -204,6 +204,9 @@ def format_metric_value(value, metric_name):
     if metric_is_percentage(metric_name):
         return f"{value:.2%}"
 
+    if metric_name == "Business Value":
+        return f"{value:,.2f}"
+
     return f"{value:,.4f}"
 
 
@@ -1881,6 +1884,8 @@ if st.session_state.model_built:
 
         graph_hover_format = ".2f"
 
+        graph_tick_format = ".2f"
+
     else:
 
         graph_y = depth_results_df[
@@ -1889,7 +1894,13 @@ if st.session_state.model_built:
 
         graph_suffix = ""
 
-        graph_hover_format = ",.4f"
+        graph_hover_format = (
+            ",.2f"
+            if metric_name == "Business Value"
+            else ",.4f"
+        )
+
+        graph_tick_format = graph_hover_format
 
 
     cv_fig = go.Figure()
@@ -1932,13 +1943,16 @@ if st.session_state.model_built:
 
     cv_fig.update_layout(
         xaxis_title="Tree Depth",
-        yaxis_title=(
-            f"{metric_name}"
-            + (
-                " (%)"
-                if metric_is_percentage(metric_name)
-                else ""
-            )
+        yaxis=dict(
+            title=(
+                f"{metric_name}"
+                + (
+                    " (%)"
+                    if metric_is_percentage(metric_name)
+                    else ""
+                )
+            ),
+            tickformat=graph_tick_format
         ),
         height=450,
         margin=dict(
@@ -2119,6 +2133,15 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
         "Variable Importance"
     )
 
+    st.write(
+        "Each percentage represents that variable's share of the tree's "
+        "total improvement in separating class 0 from class 1 across all "
+        "splits. The percentages sum to 100%; a larger percentage means "
+        "the tree relied more heavily on that variable. Importance does "
+        "not show whether the effect is positive or negative and does not "
+        "establish causation."
+    )
+
 
     importance_df = (
         get_variable_importance(
@@ -2223,37 +2246,74 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
     )
 
 
-    cm_col1, cm_col2 = (
-        st.columns(2)
+    cm_left_margin, cm_center, cm_right_margin = st.columns(
+        [1, 4, 1]
     )
 
 
-    with cm_col1:
+    with cm_center:
 
-        st.markdown(
-            "**Training Set**"
-        )
+        cm_col1, cm_col2 = st.columns(2)
 
-        st.table(
-            confusion_table(
-                y_train,
-                train_predictions
+
+        with cm_col1:
+
+            st.markdown(
+                "<div style='text-align: center;'><strong>Training Set"
+                "</strong></div>",
+                unsafe_allow_html=True
             )
-        )
 
-
-    with cm_col2:
-
-        st.markdown(
-            "**Testing Set**"
-        )
-
-        st.table(
-            confusion_table(
-                y_test,
-                test_predictions
+            st.table(
+                confusion_table(
+                    y_train,
+                    train_predictions
+                )
+                .style
+                .set_properties(
+                    **{"text-align": "center"}
+                )
+                .set_table_styles(
+                    [
+                        {
+                            "selector": "th",
+                            "props": [
+                                ("text-align", "center")
+                            ]
+                        }
+                    ]
+                )
             )
-        )
+
+
+        with cm_col2:
+
+            st.markdown(
+                "<div style='text-align: center;'><strong>Testing Set"
+                "</strong></div>",
+                unsafe_allow_html=True
+            )
+
+            st.table(
+                confusion_table(
+                    y_test,
+                    test_predictions
+                )
+                .style
+                .set_properties(
+                    **{"text-align": "center"}
+                )
+                .set_table_styles(
+                    [
+                        {
+                            "selector": "th",
+                            "props": [
+                                ("text-align", "center")
+                            ]
+                        }
+                    ]
+                )
+            )
 
 
     if metric_name == "Business Value":
@@ -2288,8 +2348,8 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
             )
 
             st.caption(
-                "Per observation: "
-                f"{train_business_value / len(y_train):,.4f}"
+                "Average business value per prediction: "
+                f"{train_business_value / len(y_train):,.2f}"
             )
 
         with business_col2:
@@ -2300,8 +2360,8 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
             )
 
             st.caption(
-                "Per observation: "
-                f"{test_business_value / len(y_test):,.4f}"
+                "Average business value per prediction: "
+                f"{test_business_value / len(y_test):,.2f}"
             )
 
 
@@ -2312,6 +2372,53 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
     st.subheader(
         "Model Performance"
     )
+
+
+    practical_descriptions = {
+        "Accuracy": (
+            "Overall percentage classified correctly; most useful when "
+            "the classes and error consequences are reasonably balanced."
+        ),
+        "Balanced Accuracy": (
+            "Measures how well the model identifies both classes while "
+            "giving class 0 and class 1 equal importance."
+        ),
+        "Misclassification Error": (
+            "Overall percentage classified incorrectly. Lower values are "
+            "better."
+        ),
+        "F1 Score": (
+            "Summarizes the balance between finding actual class 1 cases "
+            "and avoiding too many incorrect class 1 predictions."
+        ),
+        "ROC AUC": (
+            "Shows how well the model ranks class 1 above class 0 across "
+            "all possible cutoffs."
+        ),
+        "PR AUC": (
+            "Summarizes precision and recall across cutoffs; especially "
+            "useful when class 1 is uncommon."
+        ),
+        "Log Loss": (
+            "Evaluates the quality and confidence of predicted "
+            "probabilities. Lower values are better."
+        ),
+        "False Positive Rate": (
+            "Among actual class 0 cases, the percentage incorrectly flagged "
+            "as class 1."
+        ),
+        "False Negative Rate": (
+            "Among actual class 1 cases, the percentage the model misses."
+        ),
+        "Recall": (
+            "Among actual class 1 cases, the percentage the model "
+            "successfully identifies."
+        ),
+        "Precision": (
+            "Among cases predicted as class 1, the percentage that truly "
+            "belong to class 1."
+        )
+    }
 
 
     performance_rows = []
@@ -2332,7 +2439,9 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
                     format_metric_value(
                         test_metrics[metric],
                         metric
-                    )
+                    ),
+                "Practical Interpretation":
+                    practical_descriptions[metric]
             }
         )
 
@@ -2345,7 +2454,7 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
     st.dataframe(
         performance_df,
         hide_index=True,
-        use_container_width=False,
+        use_container_width=True,
         column_config={
             "Metric":
                 st.column_config.TextColumn(
@@ -2358,6 +2467,10 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
             "Testing":
                 st.column_config.TextColumn(
                     width="small"
+                ),
+            "Practical Interpretation":
+                st.column_config.TextColumn(
+                    width="large"
                 )
         }
     )
@@ -2435,6 +2548,12 @@ tree depth you allowed.
             lambda value: f"{value:.2f}%"
         )
 
+    elif metric_name == "Business Value":
+
+        formatted_matrix = display_matrix.map(
+            lambda value: f"{value:,.2f}"
+        )
+
     else:
 
         formatted_matrix = display_matrix.map(
@@ -2482,6 +2601,18 @@ tree depth you allowed.
 
         optimal_surface_z = global_score * 100
 
+        surface_tick_format = ".2f"
+
+    elif metric_name == "Business Value":
+
+        surface_hover_value = "%{z:,.2f}"
+
+        surface_z_title = metric_name
+
+        optimal_surface_z = global_score
+
+        surface_tick_format = ",.2f"
+
     else:
 
         surface_hover_value = "%{z:,.4f}"
@@ -2489,6 +2620,8 @@ tree depth you allowed.
         surface_z_title = metric_name
 
         optimal_surface_z = global_score
+
+        surface_tick_format = ",.4f"
 
 
     surface_fig = go.Figure()
@@ -2514,6 +2647,9 @@ tree depth you allowed.
                 + surface_hover_value
                 + "<extra></extra>"
             ),
+            colorbar=dict(
+                tickformat=surface_tick_format
+            ),
             showscale=True
         )
     )
@@ -2532,13 +2668,21 @@ tree depth you allowed.
             ],
             mode="markers+text",
             marker=dict(
-                size=7,
+                size=9,
                 color="red"
             ),
             text=[
-                "Optimal"
+                f"<b>Optimal</b>"
+                f"<br>Depth: {global_depth}"
+                f"<br>Cutoff: {global_cutoff:.2f}"
+                f"<br>{metric_name}: "
+                f"{format_metric_value(global_score, metric_name)}"
             ],
             textposition="top center",
+            textfont=dict(
+                size=15,
+                color="darkred"
+            ),
             hovertemplate=(
                 f"Optimal depth: "
                 f"{global_depth}"
@@ -2561,8 +2705,9 @@ tree depth you allowed.
             yaxis_title=(
                 "Classification Cutoff"
             ),
-            zaxis_title=(
-                surface_z_title
+            zaxis=dict(
+                title=surface_z_title,
+                tickformat=surface_tick_format
             )
         ),
         margin=dict(
