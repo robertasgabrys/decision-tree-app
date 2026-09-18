@@ -471,6 +471,37 @@ def confusion_matrix_html(title, y_true, predictions):
         predictions
     )
 
+    rows = []
+
+    for row_label in [
+        "Actual 0",
+        "Actual 1",
+        "Total"
+    ]:
+
+        cells = "".join(
+            f"<td>{int(table.loc[row_label, column])}</td>"
+            for column in [
+                "Predicted 0",
+                "Predicted 1",
+                "Total"
+            ]
+        )
+
+        rows.append(
+            f"<tr><th>{escape(row_label)}</th>{cells}</tr>"
+        )
+
+    return (
+        "<div class='cm-block'>"
+        f"<h4>{escape(title)}</h4>"
+        "<table class='cm-table'>"
+        "<thead><tr><th></th><th>Predicted 0</th>"
+        "<th>Predicted 1</th><th>Total</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table></div>"
+    )
+
 
 def create_cross_validation_diagram(
     fold_results,
@@ -590,37 +621,6 @@ def create_cross_validation_diagram(
     )
 
     return figure
-
-    rows = []
-
-    for row_label in [
-        "Actual 0",
-        "Actual 1",
-        "Total"
-    ]:
-
-        cells = "".join(
-            f"<td>{int(table.loc[row_label, column])}</td>"
-            for column in [
-                "Predicted 0",
-                "Predicted 1",
-                "Total"
-            ]
-        )
-
-        rows.append(
-            f"<tr><th>{escape(row_label)}</th>{cells}</tr>"
-        )
-
-    return (
-        "<div class='cm-block'>"
-        f"<h4>{escape(title)}</h4>"
-        "<table class='cm-table'>"
-        "<thead><tr><th></th><th>Predicted 0</th>"
-        "<th>Predicted 1</th><th>Total</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody>"
-        "</table></div>"
-    )
 
 
 def get_variable_importance(
@@ -1143,22 +1143,19 @@ if uploaded_file is not None:
     with test_column:
         test_percent_input = st.text_input(
             "Testing percentage",
-            value="",
-            placeholder="30"
+            value="30"
         )
 
     with folds_column:
         cv_folds_input = st.text_input(
             "CV folds",
-            value="",
-            placeholder="5"
+            value="5"
         )
 
     with seed_column:
         random_seed_input = st.text_input(
             "Random seed",
-            value="",
-            placeholder="42"
+            value="42"
         )
 
     st.markdown(
@@ -1222,8 +1219,7 @@ if uploaded_file is not None:
         with leaf_input_column:
             min_samples_leaf_input = st.text_input(
                 "Minimum observations in a terminal leaf",
-                value="",
-                placeholder="10",
+                value="10",
                 label_visibility="collapsed"
             )
 
@@ -1233,8 +1229,7 @@ if uploaded_file is not None:
         with split_input_column:
             min_samples_split_input = st.text_input(
                 "Minimum observations required to split a node",
-                value="",
-                placeholder="20",
+                value="20",
                 label_visibility="collapsed"
             )
 
