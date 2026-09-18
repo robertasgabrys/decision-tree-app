@@ -17,7 +17,6 @@ from sklearn.metrics import (
     f1_score,
     roc_auc_score,
     average_precision_score,
-    log_loss,
     confusion_matrix,
 )
 
@@ -29,6 +28,26 @@ from sklearn.metrics import (
 st.set_page_config(
     page_title="Decision Tree Model Builder",
     layout="wide"
+)
+
+st.markdown(
+    """
+    <style>
+    div[data-testid="stWidgetLabel"] p {
+        font-size: 1rem;
+        color: #262730;
+    }
+    div[role="radiogroup"] label p {
+        font-size: 1rem;
+    }
+    div[data-testid="stMetricLabel"] p {
+        font-size: 1rem;
+        color: #262730;
+        font-weight: 600;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
 st.title("Decision Tree Model Builder")
@@ -126,15 +145,6 @@ def calculate_metrics(y_true, probabilities, cutoff):
     except ValueError:
         pr_auc = np.nan
 
-    try:
-        probability_log_loss = log_loss(
-            y_true,
-            probabilities,
-            labels=[0, 1]
-        )
-    except ValueError:
-        probability_log_loss = np.nan
-
     metrics = {
         "Accuracy": accuracy,
         "Balanced Accuracy": balanced_accuracy,
@@ -142,7 +152,6 @@ def calculate_metrics(y_true, probabilities, cutoff):
         "F1 Score": f1,
         "ROC AUC": roc_auc,
         "PR AUC": pr_auc,
-        "Log Loss": probability_log_loss,
         "False Positive Rate": false_positive_rate,
         "False Negative Rate": false_negative_rate,
         "Recall": recall,
@@ -191,9 +200,34 @@ def metric_value(
 def metric_is_percentage(metric_name):
 
     return metric_name not in {
-        "Business Value",
-        "Log Loss"
+        "Business Value"
     }
+
+
+def business_value_per_prediction(
+    y_true,
+    predictions,
+    business_values
+):
+
+    y_array = np.asarray(y_true)
+    prediction_array = np.asarray(predictions)
+
+    return np.select(
+        [
+            (y_array == 1) & (prediction_array == 1),
+            (y_array == 0) & (prediction_array == 1),
+            (y_array == 1) & (prediction_array == 0),
+            (y_array == 0) & (prediction_array == 0)
+        ],
+        [
+            business_values["TP"],
+            business_values["FP"],
+            business_values["FN"],
+            business_values["TN"]
+        ],
+        default=np.nan
+    )
 
 
 def format_metric_value(value, metric_name):
@@ -207,7 +241,7 @@ def format_metric_value(value, metric_name):
     if metric_name == "Business Value":
         return f"{value:,.2f}"
 
-    return f"{value:,.4f}"
+    return f"{value:,.2f}"
 
 
 def make_preprocessor(
@@ -264,7 +298,8 @@ def make_pipeline(
     min_samples_leaf,
     min_samples_split,
     numeric_features,
-    categorical_features
+    categorical_features,
+    random_seed
 ):
 
     preprocessor = make_preprocessor(
@@ -280,7 +315,7 @@ def make_pipeline(
         min_samples_split=int(
             min_samples_split
         ),
-        random_state=42
+        random_state=int(random_seed)
     )
 
     return Pipeline(
@@ -456,7 +491,8 @@ def get_variable_importance(
 
 def create_tree_figure(
     pipeline,
-    feature_names
+    feature_names,
+    classification_cutoff
 ):
 
     tree_model = (
@@ -626,7 +662,7 @@ def create_tree_figure(
 
         predicted_class = (
             1
-            if probability_1 >= 0.50
+            if probability_1 >= classification_cutoff
             else 0
         )
 
@@ -672,7 +708,8 @@ def create_tree_figure(
                 f"{samples:,}"
                 f"<br><b>P(Class 1):</b> "
                 f"{probability_1:.2%}"
-                f"<br><b>Majority class:</b> "
+                f"<br><b>Predicted class at cutoff "
+                f"{classification_cutoff:.2f}:</b> "
                 f"{predicted_class}"
             )
 
@@ -690,7 +727,8 @@ def create_tree_figure(
                 f"{samples:,}"
                 f"<br><b>P(Class 1):</b> "
                 f"{probability_1:.2%}"
-                f"<br><b>Majority class:</b> "
+                f"<br><b>Predicted class at cutoff "
+                f"{classification_cutoff:.2f}:</b> "
                 f"{predicted_class}"
             )
 
@@ -722,13 +760,13 @@ def create_tree_figure(
             hovertext=hover_text,
             hoverinfo="text",
             marker=dict(
-                size=70,
+                size=82,
                 line=dict(
                     width=2
                 )
             ),
             textfont=dict(
-                size=10
+                size=12
             ),
             showlegend=False
         )
@@ -738,7 +776,7 @@ def create_tree_figure(
     fig.update_layout(
         height=max(
             500,
-            130 * (
+            150 * (
                 max(
                     node_depth.values()
                 ) + 1
@@ -756,6 +794,9 @@ def create_tree_figure(
         yaxis=dict(
             visible=False
         ),
+        hoverlabel=dict(
+            font_size=14
+        ),
         hovermode="closest"
     )
 
@@ -766,13 +807,19 @@ def create_tree_figure(
 # UPLOAD DATA
 # ============================================================
 
-uploaded_file = st.file_uploader(
-    "Upload a CSV or Excel file",
-    type=[
-        "csv",
-        "xlsx"
-    ]
+upload_control, _ = st.columns(
+    [2, 3]
 )
+
+with upload_control:
+
+    uploaded_file = st.file_uploader(
+        "Upload a CSV or Excel file",
+        type=[
+            "csv",
+            "xlsx"
+        ]
+    )
 
 
 if uploaded_file is not None:
@@ -816,7 +863,7 @@ if uploaded_file is not None:
     )
 
     outcome_control, _ = st.columns(
-        [1, 1]
+        [2, 3]
     )
 
     with outcome_control:
@@ -854,7 +901,7 @@ if uploaded_file is not None:
     )
 
     split_control, _ = st.columns(
-        [1, 1]
+        [2, 3]
     )
 
     with split_control:
@@ -880,9 +927,21 @@ if uploaded_file is not None:
             index=1
         )
 
-    st.caption(
+
+        random_seed = st.number_input(
+            "Random seed for reproducibility:",
+            min_value=0,
+            max_value=999999,
+            value=42,
+            step=1
+        )
+
+    st.write(
         "Cross-validation is performed only within the training data. "
-        "The testing data is reserved for the final model evaluation."
+        "The testing data is reserved for the final model evaluation. "
+        "The random seed fixes the training/testing split and "
+        "cross-validation folds so the same data and settings reproduce "
+        "the same results."
     )
 
 
@@ -895,7 +954,7 @@ if uploaded_file is not None:
     )
 
     depth_control, _ = st.columns(
-        [2, 1]
+        [1, 1]
     )
 
     with depth_control:
@@ -934,7 +993,7 @@ if uploaded_file is not None:
     )
 
     constraint_control, _ = st.columns(
-        [2, 1]
+        [1, 1]
     )
 
     with constraint_control:
@@ -978,7 +1037,6 @@ if uploaded_file is not None:
         "F1 Score",
         "ROC AUC",
         "PR AUC",
-        "Log Loss",
         "False Positive Rate",
         "False Negative Rate",
         "Recall",
@@ -987,7 +1045,7 @@ if uploaded_file is not None:
 
     metric_labels = {
         "Business Value": (
-            "Business Value: Total Financial Impact"
+            "Business Value: Total Net Financial Value or Cost"
         ),
         "Accuracy": (
             "Accuracy: Percentage of all observations classified correctly"
@@ -1007,9 +1065,6 @@ if uploaded_file is not None:
         ),
         "PR AUC": (
             "PR AUC: Precision-recall performance across all cutoffs"
-        ),
-        "Log Loss": (
-            "Log Loss: Accuracy and confidence of predicted probabilities"
         ),
         "False Positive Rate": (
             "False Positive Rate: Percentage of actual 0s incorrectly "
@@ -1043,12 +1098,14 @@ if uploaded_file is not None:
     if metric_name == "Business Value":
 
         st.markdown(
-            "#### Define the Cost-Benefit Matrix"
+            "### Define the Cost-Benefit Matrix"
         )
 
-        st.caption(
-            "Enter the expected financial impact associated with each "
-            "actual–predicted outcome."
+        st.markdown(
+            "Enter the expected financial amount associated with each "
+            "actual–predicted outcome. When maximizing, enter gains as "
+            "positive values and losses as negative values. When minimizing, "
+            "enter costs or losses as positive values."
         )
 
         matrix_control, _ = st.columns(
@@ -1058,7 +1115,7 @@ if uploaded_file is not None:
         with matrix_control:
 
             value_header_1, value_header_2, value_header_3 = st.columns(
-                [1.1, 1, 1]
+                [0.8, 1, 1]
             )
 
             with value_header_2:
@@ -1072,12 +1129,14 @@ if uploaded_file is not None:
                 )
 
             actual_0_label, tn_column, fp_column = st.columns(
-                [1.1, 1, 1]
+                [0.8, 1, 1]
             )
 
             with actual_0_label:
                 st.markdown(
-                    "**Actual 0 (Negative class)**"
+                    "<div style='padding-top: 2rem; font-size: 1rem; "
+                    "font-weight: 700;'>Actual 0 (Negative class)</div>",
+                    unsafe_allow_html=True
                 )
 
             with tn_column:
@@ -1097,12 +1156,14 @@ if uploaded_file is not None:
                 )
 
             actual_1_label, fn_column, tp_column = st.columns(
-                [1.1, 1, 1]
+                [0.8, 1, 1]
             )
 
             with actual_1_label:
                 st.markdown(
-                    "**Actual 1 (Positive class)**"
+                    "<div style='padding-top: 2rem; font-size: 1rem; "
+                    "font-weight: 700;'>Actual 1 (Positive class)</div>",
+                    unsafe_allow_html=True
                 )
 
             with fn_column:
@@ -1121,21 +1182,17 @@ if uploaded_file is not None:
                     format="%.2f"
                 )
 
-            st.markdown(
-                """
-                <div style="text-align: center; font-size: 1.1rem;
-                            font-weight: 600; margin-top: 0.75rem;">
-                    Select Business Objective:
-                </div>
-                """,
-                unsafe_allow_html=True
+            objective_label, objective_options = st.columns(
+                [1.15, 3]
             )
 
-            objective_left, objective_center, objective_right = st.columns(
-                [1, 4, 1]
-            )
+            with objective_label:
 
-            with objective_center:
+                st.markdown(
+                    "**Select Business Objective:**"
+                )
+
+            with objective_options:
 
                 optimization_direction = st.radio(
                     "Select Business Objective:",
@@ -1146,6 +1203,47 @@ if uploaded_file is not None:
                     horizontal=True,
                     label_visibility="collapsed"
                 )
+
+            compare_with_baseline = st.checkbox(
+                "Compare the model with a baseline (no-model) policy"
+            )
+
+            if compare_with_baseline:
+
+                st.markdown(
+                    "Enter the expected financial amount without using the "
+                    "model for each actual outcome, using the same value or "
+                    "cost convention as the Cost-Benefit Matrix."
+                )
+
+                baseline_col0, baseline_col1 = st.columns(2)
+
+                with baseline_col0:
+
+                    baseline_actual_0 = st.number_input(
+                        "Baseline value for Actual 0",
+                        value=0.00,
+                        step=0.50,
+                        format="%.2f"
+                    )
+
+                with baseline_col1:
+
+                    baseline_actual_1 = st.number_input(
+                        "Baseline value for Actual 1",
+                        value=0.00,
+                        step=0.50,
+                        format="%.2f"
+                    )
+
+                baseline_values = {
+                    0: float(baseline_actual_0),
+                    1: float(baseline_actual_1)
+                }
+
+            else:
+
+                baseline_values = None
 
         business_values = {
             "TP": float(tp_value),
@@ -1165,6 +1263,10 @@ if uploaded_file is not None:
 
         optimization_direction = ""
 
+        compare_with_baseline = False
+
+        baseline_values = None
+
 
     # ========================================================
     # 7. CUTOFF BEFORE BUILDING
@@ -1175,7 +1277,7 @@ if uploaded_file is not None:
     )
 
     cutoff_control, _ = st.columns(
-        [1, 1]
+        [2, 3]
     )
 
     with cutoff_control:
@@ -1189,7 +1291,7 @@ if uploaded_file is not None:
             format="%.2f"
         )
 
-    st.caption(
+    st.write(
         "An observation is classified as 1 "
         "when its predicted probability is "
         "greater than or equal to the cutoff."
@@ -1266,7 +1368,7 @@ if uploaded_file is not None:
                     / 100
                 ),
                 stratify=y,
-                random_state=42
+                random_state=int(random_seed)
             )
         )
 
@@ -1310,7 +1412,7 @@ if uploaded_file is not None:
         cv = StratifiedKFold(
             n_splits=cv_folds,
             shuffle=True,
-            random_state=42
+            random_state=int(random_seed)
         )
 
 
@@ -1379,7 +1481,8 @@ if uploaded_file is not None:
                     min_samples_leaf,
                     min_samples_split,
                     numeric_features,
-                    categorical_features
+                    categorical_features,
+                    random_seed
                 )
 
 
@@ -1448,8 +1551,7 @@ if uploaded_file is not None:
         metrics_to_minimize = {
             "Misclassification Error",
             "False Positive Rate",
-            "False Negative Rate",
-            "Log Loss"
+            "False Negative Rate"
         }
 
 
@@ -1542,8 +1644,7 @@ if uploaded_file is not None:
 
         cutoff_independent_metrics = {
             "ROC AUC",
-            "PR AUC",
-            "Log Loss"
+            "PR AUC"
         }
 
 
@@ -1641,7 +1742,8 @@ if uploaded_file is not None:
                 min_samples_leaf,
                 min_samples_split,
                 numeric_features,
-                categorical_features
+                categorical_features,
+                random_seed
             )
         )
 
@@ -1704,6 +1806,18 @@ if uploaded_file is not None:
             optimization_direction
         )
 
+        st.session_state.baseline_values_saved = (
+            baseline_values
+        )
+
+        st.session_state.compare_with_baseline_saved = (
+            compare_with_baseline
+        )
+
+        st.session_state.cv_folds_saved = int(cv_folds)
+
+        st.session_state.random_seed_saved = int(random_seed)
+
         st.session_state.chosen_cutoff_saved = (
             float(
                 chosen_cutoff
@@ -1763,6 +1877,22 @@ if st.session_state.model_built:
 
     optimization_direction = (
         st.session_state.optimization_direction_saved
+    )
+
+    baseline_values = (
+        st.session_state.baseline_values_saved
+    )
+
+    compare_with_baseline = (
+        st.session_state.compare_with_baseline_saved
+    )
+
+    cv_folds_saved = (
+        st.session_state.cv_folds_saved
+    )
+
+    random_seed_saved = (
+        st.session_state.random_seed_saved
     )
 
     chosen_cutoff_saved = (
@@ -1834,18 +1964,35 @@ if st.session_state.model_built:
     )
 
 
+    output_section_number = [1]
+
+
+    def output_section(title):
+
+        st.header(
+            f"{output_section_number[0]}. {title}"
+        )
+
+        output_section_number[0] += 1
+
+
     # ========================================================
     # SAMPLE SIZES
     # ========================================================
 
     st.divider()
 
-    st.subheader(
-        "Training and Testing Samples"
+    st.markdown(
+        "<h1 style='text-align: center;'>Decision Tree Model Results</h1>",
+        unsafe_allow_html=True
     )
 
-    sample_col1, sample_col2 = (
-        st.columns(2)
+    output_section(
+        "Data Summary"
+    )
+
+    sample_col1, sample_col2, sample_col3, sample_col4 = (
+        st.columns(4)
     )
 
     with sample_col1:
@@ -1862,13 +2009,48 @@ if st.session_state.model_built:
             f"{len(X_test):,}"
         )
 
+    with sample_col3:
+
+        st.metric(
+            "Cross-Validation Folds",
+            cv_folds_saved
+        )
+
+    with sample_col4:
+
+        st.metric(
+            "Random Seed",
+            random_seed_saved
+        )
+
 
     # ========================================================
     # CV LINE GRAPH
     # ========================================================
 
-    st.subheader(
-        "Cross-Validation Results"
+    output_section(
+        "Cross-Validation and Model Selection "
+        f"({len(X_train):,} Training Observations, "
+        f"{cv_folds_saved} Folds)"
+    )
+
+    average_validation_size = (
+        len(X_train) / cv_folds_saved
+    )
+
+    average_fold_training_size = (
+        len(X_train) - average_validation_size
+    )
+
+    st.write(
+        f"Cross-validation used only the **{len(X_train):,}-observation "
+        f"training set**. In each of the {cv_folds_saved} rounds, "
+        f"approximately **{average_fold_training_size:,.0f} observations** "
+        "fitted the tree and **"
+        f"{average_validation_size:,.0f} observations** evaluated it. "
+        "Each training observation was evaluated once while excluded from "
+        "model fitting. The testing set was not used to select the tree "
+        "depth or cutoff."
     )
 
 
@@ -1913,6 +2095,9 @@ if st.session_state.model_built:
             ],
             y=graph_y,
             mode="lines+markers",
+            marker=dict(
+                size=8
+            ),
             name=metric_name,
             hovertemplate=(
                 "Tree depth: %{x}"
@@ -1937,22 +2122,34 @@ if st.session_state.model_built:
             f"Optimal depth = "
             f"{selected_depth}"
         ),
-        annotation_position="top"
+        annotation_position="top",
+        annotation_font_size=15
     )
 
 
     cv_fig.update_layout(
-        xaxis_title="Tree Depth",
-        yaxis=dict(
-            title=(
-                f"{metric_name}"
-                + (
-                    " (%)"
-                    if metric_is_percentage(metric_name)
-                    else ""
-                )
+        xaxis=dict(
+            title=dict(
+                text="Tree Depth",
+                font=dict(size=17)
             ),
-            tickformat=graph_tick_format
+            tickfont=dict(size=14),
+            dtick=1
+        ),
+        yaxis=dict(
+            title=dict(
+                text=(
+                    f"{metric_name}"
+                    + (
+                        " (%)"
+                        if metric_is_percentage(metric_name)
+                        else ""
+                    )
+                ),
+                font=dict(size=17)
+            ),
+            tickformat=graph_tick_format,
+            tickfont=dict(size=14)
         ),
         height=450,
         margin=dict(
@@ -1983,14 +2180,58 @@ if st.session_state.model_built:
         )
 
 
+    if metric_name == "Business Value":
+
+        if optimization_direction == "Minimize cost or loss":
+
+            cv_result_label = (
+                "Out-of-Fold Cross-Validated Total Cost/Loss"
+            )
+
+            cv_average_label = (
+                "Average Cost/Loss per Cross-Validated Prediction"
+            )
+
+        else:
+
+            cv_result_label = (
+                "Out-of-Fold Cross-Validated Total Business Value"
+            )
+
+            cv_average_label = (
+                "Average Business Value per Cross-Validated Prediction"
+            )
+
+        cv_average_line = (
+            f"\n\n{cv_average_label}: "
+            f"**{selected_cv_score / len(y_train):,.2f}**"
+        )
+
+    else:
+
+        cv_result_label = (
+            f"Out-of-Fold Cross-Validated {metric_name}"
+        )
+
+        cv_average_line = ""
+
+
     st.success(
         f"""
 At the selected cutoff of **{chosen_cutoff_saved:.2f}**,
 tree depth **{selected_depth}** was selected because it produced
-the **{selection_description} cross-validated {metric_name}**.
+the **{selection_description} out-of-fold cross-validated {metric_name}**.
 
-Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_name)}**
+{cv_result_label}: **{format_metric_value(selected_cv_score, metric_name)}**
+{cv_average_line}
         """
+    )
+
+    st.write(
+        "This result summarizes predictions made for training observations "
+        "while each observation was held out from fitting. It is a "
+        "model-selection result from the training data—not final testing-set "
+        "performance and not the average of the fold totals."
     )
 
 
@@ -2016,7 +2257,8 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
                 min_samples_leaf_saved,
                 min_samples_split_saved,
                 numeric_features,
-                categorical_features
+                categorical_features,
+                random_seed_saved
             )
         )
 
@@ -2050,8 +2292,12 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
         )
 
 
-    st.subheader(
-        active_label
+    output_section(
+        "Selected Model Configuration"
+    )
+
+    st.write(
+        f"Currently displaying: **{active_label}**."
     )
 
     model_col1, model_col2 = (
@@ -2060,16 +2306,36 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
 
     with model_col1:
 
-        st.metric(
-            "Tree Depth",
-            active_depth
+        st.markdown(
+            f"""
+            <div style="text-align:center; border:1px solid #d9d9d9;
+                        border-radius:8px; padding:14px;">
+                <div style="font-size:1.15rem; font-weight:700;">
+                    Tree Depth
+                </div>
+                <div style="font-size:2rem; font-weight:700;">
+                    {active_depth}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
     with model_col2:
 
-        st.metric(
-            "Classification Cutoff",
-            f"{active_cutoff:.2f}"
+        st.markdown(
+            f"""
+            <div style="text-align:center; border:1px solid #d9d9d9;
+                        border-radius:8px; padding:14px;">
+                <div style="font-size:1.15rem; font-weight:700;">
+                    Classification Cutoff
+                </div>
+                <div style="font-size:2rem; font-weight:700;">
+                    {active_cutoff:.2f}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
 
@@ -2077,8 +2343,17 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
     # INTERACTIVE TREE
     # ========================================================
 
-    st.subheader(
+    output_section(
         "Decision Tree"
+    )
+
+    st.write(
+        "Start at the top of the tree and follow the splits downward. "
+        "If the displayed condition is true, move left; if it is false, "
+        "move right. The final terminal node shows the model's predicted "
+        "probability of class 1. The classification cutoff converts that "
+        "probability into a predicted class. Hover over any node for "
+        "additional details; zoom and pan to inspect the tree."
     )
 
     fitted_preprocessor = (
@@ -2110,7 +2385,8 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
 
     tree_fig = create_tree_figure(
         active_pipeline,
-        readable_feature_names
+        readable_feature_names,
+        active_cutoff
     )
 
 
@@ -2119,26 +2395,26 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
         use_container_width=True
     )
 
-    st.caption(
-        "Hover over a node for details. "
-        "You can zoom and pan the tree."
-    )
-
-
     # ========================================================
     # VARIABLE IMPORTANCE
     # ========================================================
 
-    st.subheader(
+    output_section(
         "Variable Importance"
     )
 
     st.write(
-        "Each percentage represents that variable's share of the tree's "
-        "total improvement in separating class 0 from class 1 across all "
-        "splits. The percentages sum to 100%; a larger percentage means "
-        "the tree relied more heavily on that variable. Importance does "
-        "not show whether the effect is positive or negative and does not "
+        "Variable Importance is based on the tree's reductions in Gini "
+        "impurity when it creates splits; it is not based on the selected "
+        "performance measure or the Cost-Benefit Matrix. The percentages "
+        "sum to 100%. For example, 20% means the variable accounted for "
+        "about 20% of the fitted tree's total improvement in separating "
+        "class 0 from class 1. It does not mean that profit, Business Value, "
+        "or accuracy increased by 20%. A value of 0% means the final tree "
+        "did not use that variable in a split. This does not prove that the "
+        "variable has no predictive value, because another correlated "
+        "variable may have been selected instead. Importance also does not "
+        "show whether an effect is positive or negative and does not "
         "establish causation."
     )
 
@@ -2241,7 +2517,7 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
     # CONFUSION MATRICES WITH TOTALS
     # ========================================================
 
-    st.subheader(
+    output_section(
         "Confusion Matrices"
     )
 
@@ -2253,7 +2529,10 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
 
     with cm_center:
 
-        cm_col1, cm_col2 = st.columns(2)
+        cm_col1, cm_col2 = st.columns(
+            2,
+            gap="large"
+        )
 
 
         with cm_col1:
@@ -2278,7 +2557,8 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
                         {
                             "selector": "th",
                             "props": [
-                                ("text-align", "center")
+                                ("text-align", "center"),
+                                ("font-weight", "700")
                             ]
                         }
                     ]
@@ -2308,7 +2588,8 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
                         {
                             "selector": "th",
                             "props": [
-                                ("text-align", "center")
+                                ("text-align", "center"),
+                                ("font-weight", "700")
                             ]
                         }
                     ]
@@ -2334,43 +2615,192 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
             business_values
         )
 
-        st.subheader(
+        output_section(
             "Business Performance"
         )
 
-        business_col1, business_col2 = st.columns(2)
+        if compare_with_baseline and baseline_values is not None:
 
-        with business_col1:
-
-            st.metric(
-                "Training Total Business Value",
-                f"{train_business_value:,.2f}"
+            minimizing_business_cost = (
+                optimization_direction == "Minimize cost or loss"
             )
 
-            st.caption(
-                "Average business value per prediction: "
-                f"{train_business_value / len(y_train):,.2f}"
+            train_baseline_value = (
+                int((y_train == 0).sum()) * baseline_values[0]
+                + int((y_train == 1).sum()) * baseline_values[1]
             )
 
-        with business_col2:
-
-            st.metric(
-                "Testing Total Business Value",
-                f"{test_business_value:,.2f}"
+            test_baseline_value = (
+                int((y_test == 0).sum()) * baseline_values[0]
+                + int((y_test == 1).sum()) * baseline_values[1]
             )
 
-            st.caption(
-                "Average business value per prediction: "
-                f"{test_business_value / len(y_test):,.2f}"
+            if minimizing_business_cost:
+
+                train_bva = (
+                    train_baseline_value - train_business_value
+                )
+
+                test_bva = (
+                    test_baseline_value - test_business_value
+                )
+
+                baseline_column_label = "Baseline Cost/Loss"
+
+                model_column_label = "Model Cost/Loss"
+
+                improvement_column_label = "Cost Savings"
+
+                improvement_percent_label = "Savings %"
+
+            else:
+
+                train_bva = (
+                    train_business_value - train_baseline_value
+                )
+
+                test_bva = (
+                    test_business_value - test_baseline_value
+                )
+
+                baseline_column_label = "Baseline Business Value"
+
+                model_column_label = "Model Business Value"
+
+                improvement_column_label = "Business Value Added"
+
+                improvement_percent_label = "BVA %"
+
+            train_bva_percent = (
+                train_bva / train_baseline_value * 100
+                if train_baseline_value != 0
+                else np.nan
             )
+
+            test_bva_percent = (
+                test_bva / test_baseline_value * 100
+                if test_baseline_value != 0
+                else np.nan
+            )
+
+            business_performance_df = pd.DataFrame(
+                [
+                    {
+                        "Data Set": "Training",
+                        baseline_column_label: (
+                            f"{train_baseline_value:,.2f}"
+                        ),
+                        model_column_label: (
+                            f"{train_business_value:,.2f}"
+                        ),
+                        improvement_column_label: (
+                            f"{train_bva:,.2f}"
+                        ),
+                        improvement_percent_label: (
+                            f"{train_bva_percent:.2f}%"
+                            if not pd.isna(train_bva_percent)
+                            else "N/A"
+                        )
+                    },
+                    {
+                        "Data Set": "Testing",
+                        baseline_column_label: (
+                            f"{test_baseline_value:,.2f}"
+                        ),
+                        model_column_label: (
+                            f"{test_business_value:,.2f}"
+                        ),
+                        improvement_column_label: (
+                            f"{test_bva:,.2f}"
+                        ),
+                        improvement_percent_label: (
+                            f"{test_bva_percent:.2f}%"
+                            if not pd.isna(test_bva_percent)
+                            else "N/A"
+                        )
+                    }
+                ]
+            )
+
+            if minimizing_business_cost:
+
+                st.write(
+                    "Baseline Cost/Loss represents the expected amount "
+                    "without using the model. Cost Savings equals Baseline "
+                    "Cost/Loss minus Model Cost/Loss."
+                )
+
+            else:
+
+                st.write(
+                    "Baseline Business Value represents the expected value "
+                    "without using the model. Business Value Added equals "
+                    "Model Business Value minus Baseline Business Value."
+                )
+
+            st.dataframe(
+                business_performance_df,
+                hide_index=True,
+                use_container_width=True
+            )
+
+            if (
+                train_baseline_value == 0
+                or test_baseline_value == 0
+            ):
+
+                st.write(
+                    "The percentage improvement is unavailable when the "
+                    "corresponding baseline amount equals zero."
+                )
+
+        else:
+
+            business_col1, business_col2 = st.columns(2)
+
+            business_total_label = (
+                "Total Cost/Loss"
+                if optimization_direction == "Minimize cost or loss"
+                else "Total Business Value"
+            )
+
+            business_average_label = (
+                "Average cost/loss per prediction"
+                if optimization_direction == "Minimize cost or loss"
+                else "Average business value per prediction"
+            )
+
+            with business_col1:
+
+                st.metric(
+                    f"Training {business_total_label}",
+                    f"{train_business_value:,.2f}"
+                )
+
+                st.write(
+                    f"{business_average_label}: "
+                    f"**{train_business_value / len(y_train):,.2f}**"
+                )
+
+            with business_col2:
+
+                st.metric(
+                    f"Testing {business_total_label}",
+                    f"{test_business_value:,.2f}"
+                )
+
+                st.write(
+                    f"{business_average_label}: "
+                    f"**{test_business_value / len(y_test):,.2f}**"
+                )
 
 
     # ========================================================
     # MODEL PERFORMANCE
     # ========================================================
 
-    st.subheader(
-        "Model Performance"
+    output_section(
+        "Model Performance Metrics"
     )
 
 
@@ -2388,20 +2818,19 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
             "better."
         ),
         "F1 Score": (
-            "Summarizes the balance between finding actual class 1 cases "
-            "and avoiding too many incorrect class 1 predictions."
+            "Combines precision and recall into one score at the selected "
+            "cutoff. Use it when finding class 1 matters and both missed "
+            "cases and false alarms are important."
         ),
         "ROC AUC": (
-            "Shows how well the model ranks class 1 above class 0 across "
-            "all possible cutoffs."
+            "Probability that a randomly selected class 1 case receives a "
+            "higher predicted score than a randomly selected class 0 case. "
+            "Use it to compare ranking ability before selecting a cutoff."
         ),
         "PR AUC": (
-            "Summarizes precision and recall across cutoffs; especially "
-            "useful when class 1 is uncommon."
-        ),
-        "Log Loss": (
-            "Evaluates the quality and confidence of predicted "
-            "probabilities. Lower values are better."
+            "Summarizes how successfully the model finds class 1 cases "
+            "while limiting incorrect class 1 predictions across cutoffs. "
+            "Most useful when class 1 is uncommon."
         ),
         "False Positive Rate": (
             "Among actual class 0 cases, the percentage incorrectly flagged "
@@ -2455,22 +2884,24 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
         performance_df,
         hide_index=True,
         use_container_width=True,
+        height=(len(performance_df) + 1) * 68,
+        row_height=64,
         column_config={
             "Metric":
                 st.column_config.TextColumn(
-                    width="medium"
+                    width=150
                 ),
             "Training":
                 st.column_config.TextColumn(
-                    width="small"
+                    width=90
                 ),
             "Testing":
                 st.column_config.TextColumn(
-                    width="small"
+                    width=90
                 ),
             "Practical Interpretation":
                 st.column_config.TextColumn(
-                    width="large"
+                    width=760
                 )
         }
     )
@@ -2480,10 +2911,8 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
     # CUTOFF × DEPTH ANALYSIS
     # ========================================================
 
-    st.divider()
-
-    st.header(
-        "Cutoff × Tree Depth Analysis"
+    output_section(
+        "Cross-Validated Cutoff × Tree Depth Analysis"
     )
 
 
@@ -2492,15 +2921,15 @@ Cross-validated {metric_name}: **{format_metric_value(selected_cv_score, metric_
 The table and 3D graph below evaluate **{metric_name}**
 using cross-validation on the training data for every
 classification cutoff from **0.00 to 1.00** and every
-tree depth you allowed.
+tree depth you allowed. These values are used for model
+selection and are **not testing-set performance**.
         """
     )
 
 
     cutoff_independent_metrics = {
         "ROC AUC",
-        "PR AUC",
-        "Log Loss"
+        "PR AUC"
     }
 
 
@@ -2699,15 +3128,28 @@ tree depth you allowed.
     surface_fig.update_layout(
         height=650,
         scene=dict(
-            xaxis_title=(
-                "Tree Depth"
+            xaxis=dict(
+                title=dict(
+                    text="Tree Depth",
+                    font=dict(size=16)
+                ),
+                tickfont=dict(size=13),
+                dtick=1
             ),
-            yaxis_title=(
-                "Classification Cutoff"
+            yaxis=dict(
+                title=dict(
+                    text="Classification Cutoff",
+                    font=dict(size=16)
+                ),
+                tickfont=dict(size=13)
             ),
             zaxis=dict(
-                title=surface_z_title,
-                tickformat=surface_tick_format
+                title=dict(
+                    text=surface_z_title,
+                    font=dict(size=16)
+                ),
+                tickformat=surface_tick_format,
+                tickfont=dict(size=13)
             )
         ),
         margin=dict(
@@ -2800,9 +3242,7 @@ combinations evaluated.
     # DOWNLOAD PREDICTIONS
     # ========================================================
 
-    st.divider()
-
-    st.subheader(
+    output_section(
         "Download Predictions"
     )
 
@@ -2810,6 +3250,69 @@ combinations evaluated.
     model_df = (
         st.session_state.model_df
     )
+
+
+    selected_pipeline_for_download = (
+        st.session_state.selected_pipeline
+    )
+
+    global_pipeline_for_download = make_pipeline(
+        global_depth,
+        min_samples_leaf_saved,
+        min_samples_split_saved,
+        numeric_features,
+        categorical_features,
+        random_seed_saved
+    )
+
+    global_pipeline_for_download.fit(
+        X_train,
+        y_train
+    )
+
+    selected_train_probabilities = (
+        selected_pipeline_for_download.predict_proba(
+            X_train
+        )[:, 1]
+    )
+
+    selected_test_probabilities = (
+        selected_pipeline_for_download.predict_proba(
+            X_test
+        )[:, 1]
+    )
+
+    global_train_probabilities = (
+        global_pipeline_for_download.predict_proba(
+            X_train
+        )[:, 1]
+    )
+
+    global_test_probabilities = (
+        global_pipeline_for_download.predict_proba(
+            X_test
+        )[:, 1]
+    )
+
+    selected_train_predictions = (
+        selected_train_probabilities
+        >= chosen_cutoff_saved
+    ).astype(int)
+
+    selected_test_predictions = (
+        selected_test_probabilities
+        >= chosen_cutoff_saved
+    ).astype(int)
+
+    global_train_predictions = (
+        global_train_probabilities
+        >= global_cutoff
+    ).astype(int)
+
+    global_test_predictions = (
+        global_test_probabilities
+        >= global_cutoff
+    ).astype(int)
 
 
     train_output = (
@@ -2824,12 +3327,30 @@ combinations evaluated.
     ] = "Training"
 
     train_output[
-        "Predicted_Probability"
-    ] = train_probabilities
+        "Predicted_Probability_of_1_Selected_Model"
+    ] = selected_train_probabilities
+
+    selected_class_column = (
+        "Predicted_Class_Selected_Cutoff_"
+        f"{chosen_cutoff_saved:.2f}"
+    )
+
+    optimal_class_column = (
+        "Predicted_Class_Optimal_Cutoff_"
+        f"{global_cutoff:.2f}"
+    )
 
     train_output[
-        "Predicted_Class"
-    ] = train_predictions
+        selected_class_column
+    ] = selected_train_predictions
+
+    train_output[
+        "Predicted_Probability_of_1_Optimal_Model"
+    ] = global_train_probabilities
+
+    train_output[
+        optimal_class_column
+    ] = global_train_predictions
 
 
     test_output = (
@@ -2844,12 +3365,55 @@ combinations evaluated.
     ] = "Testing"
 
     test_output[
-        "Predicted_Probability"
-    ] = test_probabilities
+        "Predicted_Probability_of_1_Selected_Model"
+    ] = selected_test_probabilities
 
     test_output[
-        "Predicted_Class"
-    ] = test_predictions
+        selected_class_column
+    ] = selected_test_predictions
+
+    test_output[
+        "Predicted_Probability_of_1_Optimal_Model"
+    ] = global_test_probabilities
+
+    test_output[
+        optimal_class_column
+    ] = global_test_predictions
+
+
+    if metric_name == "Business Value":
+
+        train_output[
+            "Business_Value_Selected_Model"
+        ] = business_value_per_prediction(
+            y_train.values,
+            selected_train_predictions,
+            business_values
+        )
+
+        test_output[
+            "Business_Value_Selected_Model"
+        ] = business_value_per_prediction(
+            y_test.values,
+            selected_test_predictions,
+            business_values
+        )
+
+        train_output[
+            "Business_Value_Optimal_Model"
+        ] = business_value_per_prediction(
+            y_train.values,
+            global_train_predictions,
+            business_values
+        )
+
+        test_output[
+            "Business_Value_Optimal_Model"
+        ] = business_value_per_prediction(
+            y_test.values,
+            global_test_predictions,
+            business_values
+        )
 
 
     output_df = pd.concat(
@@ -2862,11 +3426,15 @@ combinations evaluated.
 
     st.write(
         f"""
-The downloaded file uses:
+The downloaded file includes results from both model-selection policies:
 
-**Tree depth:** {active_depth}
+**Selected model:** depth {selected_depth}, cutoff {chosen_cutoff_saved:.2f}
 
-**Classification cutoff:** {active_cutoff:.2f}
+**Cross-validated optimal model:** depth {global_depth}, cutoff {global_cutoff:.2f}
+
+`Predicted_Probability_of_1` is the model's predicted probability that the
+outcome equals 1. When Business Value is selected, the file also contains the
+Cost-Benefit Matrix value assigned to each prediction outcome.
         """
     )
 
