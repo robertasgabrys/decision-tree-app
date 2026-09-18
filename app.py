@@ -812,10 +812,16 @@ if uploaded_file is not None:
         "1. Select Outcome Variable"
     )
 
-    target = st.selectbox(
-        "Which column are you predicting?",
-        options=df.columns
+    outcome_control, _ = st.columns(
+        [1, 1]
     )
+
+    with outcome_control:
+
+        target = st.selectbox(
+            "Which column are you predicting?",
+            options=df.columns
+        )
 
 
     # ========================================================
@@ -844,26 +850,32 @@ if uploaded_file is not None:
         "3. Configure Training, Testing, and Cross-Validation"
     )
 
-    test_percent = st.selectbox(
-        "Percentage of observations used for testing:",
-        options=[
-            20,
-            30,
-            40
-        ],
-        index=1
+    split_control, _ = st.columns(
+        [1, 1]
     )
 
+    with split_control:
 
-    cv_folds = st.selectbox(
-        "Number of cross-validation folds:",
-        options=[
-            3,
-            5,
-            10
-        ],
-        index=1
-    )
+        test_percent = st.selectbox(
+            "Percentage of observations used for testing:",
+            options=[
+                20,
+                30,
+                40
+            ],
+            index=1
+        )
+
+
+        cv_folds = st.selectbox(
+            "Number of cross-validation folds:",
+            options=[
+                3,
+                5,
+                10
+            ],
+            index=1
+        )
 
     st.caption(
         "Cross-validation is performed only within the training data. "
@@ -879,29 +891,35 @@ if uploaded_file is not None:
         "4. Select Tree Depth Range"
     )
 
-    depth_col1, depth_col2 = (
-        st.columns(2)
+    depth_control, _ = st.columns(
+        [2, 1]
     )
 
-    with depth_col1:
+    with depth_control:
 
-        min_depth = st.number_input(
-            "Minimum tree depth",
-            min_value=1,
-            max_value=30,
-            value=1,
-            step=1
+        depth_col1, depth_col2 = (
+            st.columns(2)
         )
 
-    with depth_col2:
+        with depth_col1:
 
-        max_depth = st.number_input(
-            "Maximum tree depth",
-            min_value=1,
-            max_value=30,
-            value=10,
-            step=1
-        )
+            min_depth = st.number_input(
+                "Minimum tree depth",
+                min_value=1,
+                max_value=30,
+                value=1,
+                step=1
+            )
+
+        with depth_col2:
+
+            max_depth = st.number_input(
+                "Maximum tree depth",
+                min_value=1,
+                max_value=30,
+                value=10,
+                step=1
+            )
 
 
     # ========================================================
@@ -912,118 +930,117 @@ if uploaded_file is not None:
         "5. Tree Constraints"
     )
 
-    constraint_col1, constraint_col2 = (
-        st.columns(2)
+    constraint_control, _ = st.columns(
+        [2, 1]
     )
 
-    with constraint_col1:
+    with constraint_control:
 
-        min_samples_leaf = st.number_input(
-            "Minimum observations in a terminal leaf",
-            min_value=1,
-            value=10,
-            step=1
+        constraint_col1, constraint_col2 = (
+            st.columns(2)
         )
 
-    with constraint_col2:
+        with constraint_col1:
 
-        min_samples_split = st.number_input(
-            "Minimum observations required to split a node",
-            min_value=2,
-            value=20,
-            step=1
-        )
+            min_samples_leaf = st.number_input(
+                "Minimum observations in a terminal leaf",
+                min_value=1,
+                value=10,
+                step=1
+            )
+
+        with constraint_col2:
+
+            min_samples_split = st.number_input(
+                "Minimum observations required to split a node",
+                min_value=2,
+                value=20,
+                step=1
+            )
 
 
     # ========================================================
-    # 6. MODEL-SELECTION OBJECTIVE
+    # 6. MODEL PERFORMANCE MEASURE
     # ========================================================
 
     st.subheader(
-        "6. Select Model-Selection Objective"
+        "6. Select Model Performance Measure"
     )
 
-    metric_name = st.selectbox(
-        "Objective used to select the tree:",
-        options=[
-            "Business Value",
-            "Accuracy",
-            "Balanced Accuracy",
-            "Misclassification Error",
-            "F1 Score",
-            "ROC AUC",
-            "PR AUC",
-            "Log Loss",
-            "False Positive Rate",
-            "False Negative Rate",
-            "Recall",
-            "Precision"
-        ]
-    )
+    metric_options = [
+        "Business Value",
+        "Accuracy",
+        "Balanced Accuracy",
+        "Misclassification Error",
+        "F1 Score",
+        "ROC AUC",
+        "PR AUC",
+        "Log Loss",
+        "False Positive Rate",
+        "False Negative Rate",
+        "Recall",
+        "Precision"
+    ]
 
-
-    metric_explanations = {
+    metric_labels = {
         "Business Value": (
-            "Uses the value assigned to each true positive, false positive, "
-            "false negative, and true negative. The app selects the model "
-            "that maximizes total payoff or minimizes total cost."
+            "Business Value: Total Financial Impact"
         ),
         "Accuracy": (
-            "Percentage of observations whose predicted class matches "
-            "their actual class. Accuracy can be misleading when one "
-            "outcome is much more common than the other."
+            "Accuracy: Percentage of all observations classified correctly"
         ),
         "Balanced Accuracy": (
-            "Average of the percentage of actual 1s correctly predicted "
-            "and the percentage of actual 0s correctly predicted. It gives "
-            "the two actual classes equal importance."
+            "Balanced Accuracy: Average accuracy across classes 0 and 1"
         ),
         "Misclassification Error": (
-            "Percentage of observations whose predicted class does not "
-            "match the actual class."
+            "Misclassification Error: Percentage of all observations "
+            "classified incorrectly"
         ),
         "F1 Score": (
-            "Harmonic mean of precision and recall. It balances finding "
-            "actual 1s with limiting incorrect predictions of 1."
+            "F1 Score: Balance between precision and recall"
         ),
         "ROC AUC": (
-            "Measures how well the model ranks actual 1s above actual 0s "
-            "across all possible cutoffs. It does not select a cutoff."
+            "ROC AUC: Ability to rank class 1 above class 0 across all cutoffs"
         ),
         "PR AUC": (
-            "Summarizes the tradeoff between precision and recall across "
-            "possible cutoffs. It is often useful when class 1 is uncommon."
+            "PR AUC: Precision-recall performance across all cutoffs"
         ),
         "Log Loss": (
-            "Evaluates predicted probabilities and penalizes confident "
-            "incorrect predictions. Lower values are better, and it does "
-            "not select a cutoff."
+            "Log Loss: Accuracy and confidence of predicted probabilities"
         ),
         "False Positive Rate": (
-            "Of the actual 0s, the percentage incorrectly predicted as 1."
+            "False Positive Rate: Percentage of actual 0s incorrectly "
+            "classified as 1"
         ),
         "False Negative Rate": (
-            "Of the actual 1s, the percentage incorrectly predicted as 0."
+            "False Negative Rate: Percentage of actual 1s incorrectly "
+            "classified as 0"
         ),
         "Recall": (
-            "Of the actual 1s, the percentage correctly predicted as 1."
+            "Recall: Percentage of actual 1s correctly classified as 1"
         ),
         "Precision": (
-            "Of observations predicted as 1, the percentage that are "
-            "actually 1."
+            "Precision: Percentage of predicted 1s that are actually 1"
         )
     }
 
-    st.info(
-        f"**{metric_name}:** "
-        f"{metric_explanations[metric_name]}"
+    metric_control, _ = st.columns(
+        [3, 2]
     )
+
+    with metric_control:
+
+        metric_name = st.selectbox(
+            "Measure used to compare alternative trees:",
+            options=metric_options,
+            format_func=lambda metric: metric_labels[metric]
+        )
 
 
     if metric_name == "Business Value":
 
         st.markdown(
-            "**Define the Cost-Benefit Matrix**"
+            "#### Define the Cost-Benefit Matrix"
         )
 
         st.caption(
@@ -1031,85 +1048,101 @@ if uploaded_file is not None:
             "actual–predicted outcome."
         )
 
-        st.caption(
-            "Each value should represent one prediction decision—for "
-            "example, one customer, flight, booking, transaction, or machine."
+        matrix_control, _ = st.columns(
+            [3, 2]
         )
 
-        st.caption(
-            "Positive class refers to class 1 and negative class refers to "
-            "class 0; these labels do not indicate whether the financial "
-            "impact is favorable or unfavorable."
-        )
+        with matrix_control:
 
-        value_header_1, value_header_2, value_header_3 = st.columns(
-            [1.35, 1, 1]
-        )
-
-        with value_header_2:
-            st.markdown("**Predicted 0**  ")
-            st.caption("Negative class")
-
-        with value_header_3:
-            st.markdown("**Predicted 1**  ")
-            st.caption("Positive class")
-
-        actual_0_label, tn_column, fp_column = st.columns(
-            [1.35, 1, 1]
-        )
-
-        with actual_0_label:
-            st.markdown("**Actual 0**  ")
-            st.caption("Negative class")
-
-        with tn_column:
-            tn_value = st.number_input(
-                "True Negative (TN)",
-                value=1.00,
-                step=0.50,
-                format="%.2f"
+            value_header_1, value_header_2, value_header_3 = st.columns(
+                [1.1, 1, 1]
             )
 
-        with fp_column:
-            fp_value = st.number_input(
-                "False Positive (FP)",
-                value=0.00,
-                step=0.50,
-                format="%.2f"
+            with value_header_2:
+                st.markdown(
+                    "**Predicted 0 (Negative class)**"
+                )
+
+            with value_header_3:
+                st.markdown(
+                    "**Predicted 1 (Positive class)**"
+                )
+
+            actual_0_label, tn_column, fp_column = st.columns(
+                [1.1, 1, 1]
             )
 
-        actual_1_label, fn_column, tp_column = st.columns(
-            [1.35, 1, 1]
-        )
+            with actual_0_label:
+                st.markdown(
+                    "**Actual 0 (Negative class)**"
+                )
 
-        with actual_1_label:
-            st.markdown("**Actual 1**  ")
-            st.caption("Positive class")
+            with tn_column:
+                tn_value = st.number_input(
+                    "True Negative (TN)",
+                    value=1.00,
+                    step=0.50,
+                    format="%.2f"
+                )
 
-        with fn_column:
-            fn_value = st.number_input(
-                "False Negative (FN)",
-                value=0.00,
-                step=0.50,
-                format="%.2f"
+            with fp_column:
+                fp_value = st.number_input(
+                    "False Positive (FP)",
+                    value=0.00,
+                    step=0.50,
+                    format="%.2f"
+                )
+
+            actual_1_label, fn_column, tp_column = st.columns(
+                [1.1, 1, 1]
             )
 
-        with tp_column:
-            tp_value = st.number_input(
-                "True Positive (TP)",
-                value=1.00,
-                step=0.50,
-                format="%.2f"
+            with actual_1_label:
+                st.markdown(
+                    "**Actual 1 (Positive class)**"
+                )
+
+            with fn_column:
+                fn_value = st.number_input(
+                    "False Negative (FN)",
+                    value=0.00,
+                    step=0.50,
+                    format="%.2f"
+                )
+
+            with tp_column:
+                tp_value = st.number_input(
+                    "True Positive (TP)",
+                    value=1.00,
+                    step=0.50,
+                    format="%.2f"
+                )
+
+            st.markdown(
+                """
+                <div style="text-align: center; font-size: 1.1rem;
+                            font-weight: 600; margin-top: 0.75rem;">
+                    Select Business Objective:
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
-        optimization_direction = st.radio(
-            "Optimization direction:",
-            options=[
-                "Maximize payoff or profit",
-                "Minimize cost or loss"
-            ],
-            horizontal=True
-        )
+            objective_left, objective_center, objective_right = st.columns(
+                [1, 4, 1]
+            )
+
+            with objective_center:
+
+                optimization_direction = st.radio(
+                    "Select Business Objective:",
+                    options=[
+                        "Maximize payoff or profit",
+                        "Minimize cost or loss"
+                    ],
+                    horizontal=True,
+                    label_visibility="collapsed"
+                )
 
         business_values = {
             "TP": float(tp_value),
@@ -1138,14 +1171,20 @@ if uploaded_file is not None:
         "7. Classification Cutoff"
     )
 
-    chosen_cutoff = st.number_input(
-        "Enter classification cutoff:",
-        min_value=0.00,
-        max_value=1.00,
-        value=0.50,
-        step=0.01,
-        format="%.2f"
+    cutoff_control, _ = st.columns(
+        [1, 1]
     )
+
+    with cutoff_control:
+
+        chosen_cutoff = st.number_input(
+            "Enter classification cutoff:",
+            min_value=0.00,
+            max_value=1.00,
+            value=0.50,
+            step=0.01,
+            format="%.2f"
+        )
 
     st.caption(
         "An observation is classified as 1 "
