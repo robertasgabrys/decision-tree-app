@@ -27,7 +27,7 @@ from sklearn.metrics import (
 # ============================================================
 
 st.set_page_config(
-    page_title="Decision Tree Model Builder",
+    page_title="Financially Optimized Decision Tree Predictive Modeler",
     layout="wide"
 )
 
