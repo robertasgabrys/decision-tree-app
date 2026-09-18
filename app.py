@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from html import escape
 
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -45,6 +46,80 @@ st.markdown(
         color: #262730;
         font-weight: 600;
     }
+    .important-instruction {
+        color: #262730;
+        font-size: 1.05rem;
+        line-height: 1.5;
+    }
+    .business-objective {
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin: 0.25rem 0 0.4rem 0;
+    }
+    .cm-wrapper {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        gap: 96px;
+        flex-wrap: wrap;
+        margin: 0.5rem auto 1.5rem auto;
+    }
+    .cm-block h4 {
+        text-align: center;
+        font-size: 1.15rem;
+        margin: 0 0 0.5rem 0;
+    }
+    .cm-table {
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 1.05rem;
+    }
+    .cm-table th, .cm-table td {
+        border: 1px solid #d9d9d9;
+        min-width: 92px;
+        height: 46px;
+        padding: 8px 12px;
+        text-align: center !important;
+        vertical-align: middle !important;
+    }
+    .cm-table th { font-weight: 700; }
+    .cm-table tr:last-child th,
+    .cm-table tr:last-child td,
+    .cm-table th:last-child,
+    .cm-table td:last-child { font-weight: 700; }
+    .performance-table, .business-table {
+        border-collapse: collapse;
+        table-layout: fixed;
+        margin: 0 auto 1rem auto;
+        color: #262730;
+    }
+    .performance-table { width: 100%; }
+    .business-table { width: 50%; }
+    .performance-table th, .performance-table td,
+    .business-table th, .business-table td {
+        border: 1px solid #d9d9d9;
+        padding: 9px 10px;
+        vertical-align: top;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+    .performance-table th, .business-table th {
+        background: #f4f6f8;
+        font-weight: 700;
+        text-align: center;
+    }
+    .performance-table th:nth-child(1),
+    .performance-table td:nth-child(1) { width: 17%; }
+    .performance-table th:nth-child(2),
+    .performance-table td:nth-child(2),
+    .performance-table th:nth-child(3),
+    .performance-table td:nth-child(3) {
+        width: 10%;
+        text-align: center;
+    }
+    .performance-table th:nth-child(4),
+    .performance-table td:nth-child(4) { width: 63%; }
+    .business-table td { text-align: center; vertical-align: middle; }
     </style>
     """,
     unsafe_allow_html=True
@@ -386,6 +461,45 @@ def confusion_table(
             table,
             total_row
         ]
+    )
+
+
+def confusion_matrix_html(title, y_true, predictions):
+
+    table = confusion_table(
+        y_true,
+        predictions
+    )
+
+    rows = []
+
+    for row_label in [
+        "Actual 0",
+        "Actual 1",
+        "Total"
+    ]:
+
+        cells = "".join(
+            f"<td>{int(table.loc[row_label, column])}</td>"
+            for column in [
+                "Predicted 0",
+                "Predicted 1",
+                "Total"
+            ]
+        )
+
+        rows.append(
+            f"<tr><th>{escape(row_label)}</th>{cells}</tr>"
+        )
+
+    return (
+        "<div class='cm-block'>"
+        f"<h4>{escape(title)}</h4>"
+        "<table class='cm-table'>"
+        "<thead><tr><th></th><th>Predicted 0</th>"
+        "<th>Predicted 1</th><th>Total</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table></div>"
     )
 
 
@@ -863,14 +977,16 @@ if uploaded_file is not None:
     )
 
     outcome_control, _ = st.columns(
-        [2, 3]
+        [1, 4]
     )
 
     with outcome_control:
 
         target = st.selectbox(
             "Which column are you predicting?",
-            options=df.columns
+            options=df.columns,
+            index=None,
+            placeholder="Select outcome"
         )
 
 
@@ -901,39 +1017,29 @@ if uploaded_file is not None:
     )
 
     split_control, _ = st.columns(
-        [2, 3]
+        [1, 4]
     )
 
     with split_control:
 
-        test_percent = st.selectbox(
+        test_percent_input = st.text_input(
             "Percentage of observations used for testing:",
-            options=[
-                20,
-                30,
-                40
-            ],
-            index=1
+            value="",
+            placeholder="e.g., 30"
         )
 
 
-        cv_folds = st.selectbox(
+        cv_folds_input = st.text_input(
             "Number of cross-validation folds:",
-            options=[
-                3,
-                5,
-                10
-            ],
-            index=1
+            value="",
+            placeholder="e.g., 5"
         )
 
 
-        random_seed = st.number_input(
+        random_seed_input = st.text_input(
             "Random seed for reproducibility:",
-            min_value=0,
-            max_value=999999,
-            value=42,
-            step=1
+            value="",
+            placeholder="e.g., 42"
         )
 
     st.write(
@@ -954,7 +1060,7 @@ if uploaded_file is not None:
     )
 
     depth_control, _ = st.columns(
-        [1, 1]
+        [1, 4]
     )
 
     with depth_control:
@@ -965,22 +1071,18 @@ if uploaded_file is not None:
 
         with depth_col1:
 
-            min_depth = st.number_input(
+            min_depth_input = st.text_input(
                 "Minimum tree depth",
-                min_value=1,
-                max_value=30,
-                value=1,
-                step=1
+                value="",
+                placeholder="e.g., 1"
             )
 
         with depth_col2:
 
-            max_depth = st.number_input(
+            max_depth_input = st.text_input(
                 "Maximum tree depth",
-                min_value=1,
-                max_value=30,
-                value=10,
-                step=1
+                value="",
+                placeholder="e.g., 10"
             )
 
 
@@ -993,7 +1095,7 @@ if uploaded_file is not None:
     )
 
     constraint_control, _ = st.columns(
-        [1, 1]
+        [1, 4]
     )
 
     with constraint_control:
@@ -1004,20 +1106,18 @@ if uploaded_file is not None:
 
         with constraint_col1:
 
-            min_samples_leaf = st.number_input(
+            min_samples_leaf_input = st.text_input(
                 "Minimum observations in a terminal leaf",
-                min_value=1,
-                value=10,
-                step=1
+                value="",
+                placeholder="e.g., 10"
             )
 
         with constraint_col2:
 
-            min_samples_split = st.number_input(
+            min_samples_split_input = st.text_input(
                 "Minimum observations required to split a node",
-                min_value=2,
-                value=20,
-                step=1
+                value="",
+                placeholder="e.g., 20"
             )
 
 
@@ -1083,7 +1183,7 @@ if uploaded_file is not None:
     }
 
     metric_control, _ = st.columns(
-        [3, 2]
+        [3, 7]
     )
 
     with metric_control:
@@ -1097,19 +1197,104 @@ if uploaded_file is not None:
 
     if metric_name == "Business Value":
 
+        objective_control, _ = st.columns(
+            [3, 2]
+        )
+
+        with objective_control:
+
+            objective_label, objective_choices = st.columns(
+                [1.1, 3]
+            )
+
+            with objective_label:
+                st.markdown(
+                    "<div class='business-objective'>Select Business "
+                    "Objective:</div>",
+                    unsafe_allow_html=True
+                )
+
+            with objective_choices:
+                optimization_direction = st.radio(
+                    "Select Business Objective:",
+                    options=[
+                        "Maximize payoff or profit",
+                        "Minimize cost or loss"
+                    ],
+                    horizontal=True,
+                    label_visibility="collapsed"
+                )
+
+        st.markdown(
+            "### Baseline/Benchmark Financial Value (Without the Model)"
+        )
+
+        st.markdown(
+            "<div class='important-instruction'>Enter the financial value "
+            "for each actual outcome under the current or no-model policy. "
+            "These values provide the benchmark used to calculate Business "
+            "Value Added or cost savings.</div>",
+            unsafe_allow_html=True
+        )
+
+        baseline_control, _ = st.columns(
+            [2, 5]
+        )
+
+        with baseline_control:
+
+            baseline_0_label, baseline_0_value = st.columns(
+                [1, 1.4]
+            )
+
+            with baseline_0_label:
+                st.markdown(
+                    "<div style='padding-top:0.65rem; font-weight:700;'>"
+                    "Actual 0</div>",
+                    unsafe_allow_html=True
+                )
+
+            with baseline_0_value:
+                baseline_actual_0_input = st.text_input(
+                    "Baseline value for Actual 0",
+                    value="",
+                    label_visibility="collapsed",
+                    placeholder="Actual 0 value"
+                )
+            baseline_1_label, baseline_1_value = st.columns(
+                [1, 1.4]
+            )
+
+            with baseline_1_label:
+                st.markdown(
+                    "<div style='padding-top:0.65rem; font-weight:700;'>"
+                    "Actual 1</div>",
+                    unsafe_allow_html=True
+                )
+
+            with baseline_1_value:
+                baseline_actual_1_input = st.text_input(
+                    "Baseline value for Actual 1",
+                    value="",
+                    label_visibility="collapsed",
+                    placeholder="Actual 1 value"
+                )
+
         st.markdown(
             "### Define the Cost-Benefit Matrix"
         )
 
         st.markdown(
-            "Enter the expected financial amount associated with each "
-            "actual–predicted outcome. When maximizing, enter gains as "
-            "positive values and losses as negative values. When minimizing, "
-            "enter costs or losses as positive values."
+            "<div class='important-instruction'>Enter the expected financial "
+            "impact associated with each actual–predicted outcome. When "
+            "maximizing, enter gains as positive values and losses as "
+            "negative values. When minimizing, enter costs or losses as "
+            "positive values.</div>",
+            unsafe_allow_html=True
         )
 
         matrix_control, _ = st.columns(
-            [3, 2]
+            [2, 3]
         )
 
         with matrix_control:
@@ -1140,19 +1325,17 @@ if uploaded_file is not None:
                 )
 
             with tn_column:
-                tn_value = st.number_input(
+                tn_value_input = st.text_input(
                     "True Negative (TN)",
-                    value=1.00,
-                    step=0.50,
-                    format="%.2f"
+                    value="",
+                    placeholder="Enter value"
                 )
 
             with fp_column:
-                fp_value = st.number_input(
+                fp_value_input = st.text_input(
                     "False Positive (FP)",
-                    value=0.00,
-                    step=0.50,
-                    format="%.2f"
+                    value="",
+                    placeholder="Enter value"
                 )
 
             actual_1_label, fn_column, tp_column = st.columns(
@@ -1167,105 +1350,22 @@ if uploaded_file is not None:
                 )
 
             with fn_column:
-                fn_value = st.number_input(
+                fn_value_input = st.text_input(
                     "False Negative (FN)",
-                    value=0.00,
-                    step=0.50,
-                    format="%.2f"
+                    value="",
+                    placeholder="Enter value"
                 )
 
             with tp_column:
-                tp_value = st.number_input(
+                tp_value_input = st.text_input(
                     "True Positive (TP)",
-                    value=1.00,
-                    step=0.50,
-                    format="%.2f"
+                    value="",
+                    placeholder="Enter value"
                 )
-
-            objective_label, objective_options = st.columns(
-                [1.15, 3]
-            )
-
-            with objective_label:
-
-                st.markdown(
-                    "**Select Business Objective:**"
-                )
-
-            with objective_options:
-
-                optimization_direction = st.radio(
-                    "Select Business Objective:",
-                    options=[
-                        "Maximize payoff or profit",
-                        "Minimize cost or loss"
-                    ],
-                    horizontal=True,
-                    label_visibility="collapsed"
-                )
-
-            compare_with_baseline = st.checkbox(
-                "Compare the model with a baseline (no-model) policy"
-            )
-
-            if compare_with_baseline:
-
-                st.markdown(
-                    "Enter the expected financial amount without using the "
-                    "model for each actual outcome, using the same value or "
-                    "cost convention as the Cost-Benefit Matrix."
-                )
-
-                baseline_col0, baseline_col1 = st.columns(2)
-
-                with baseline_col0:
-
-                    baseline_actual_0 = st.number_input(
-                        "Baseline value for Actual 0",
-                        value=0.00,
-                        step=0.50,
-                        format="%.2f"
-                    )
-
-                with baseline_col1:
-
-                    baseline_actual_1 = st.number_input(
-                        "Baseline value for Actual 1",
-                        value=0.00,
-                        step=0.50,
-                        format="%.2f"
-                    )
-
-                baseline_values = {
-                    0: float(baseline_actual_0),
-                    1: float(baseline_actual_1)
-                }
-
-            else:
-
-                baseline_values = None
-
-        business_values = {
-            "TP": float(tp_value),
-            "FP": float(fp_value),
-            "FN": float(fn_value),
-            "TN": float(tn_value)
-        }
 
     else:
 
-        business_values = {
-            "TP": 0.0,
-            "FP": 0.0,
-            "FN": 0.0,
-            "TN": 0.0
-        }
-
         optimization_direction = ""
-
-        compare_with_baseline = False
-
-        baseline_values = None
 
 
     # ========================================================
@@ -1277,18 +1377,15 @@ if uploaded_file is not None:
     )
 
     cutoff_control, _ = st.columns(
-        [2, 3]
+        [1, 11]
     )
 
     with cutoff_control:
 
-        chosen_cutoff = st.number_input(
+        chosen_cutoff_input = st.text_input(
             "Enter classification cutoff:",
-            min_value=0.00,
-            max_value=1.00,
-            value=0.50,
-            step=0.01,
-            format="%.2f"
+            value="",
+            placeholder="0.XX"
         )
 
     st.write(
@@ -1307,24 +1404,207 @@ if uploaded_file is not None:
         type="primary"
     ):
 
-        if len(
-            predictors
-        ) == 0:
+        validation_errors = []
 
-            st.error(
-                "Please select at least one predictor variable."
+
+        def required_integer(raw_value, section, field_name, minimum, maximum):
+
+            if not str(raw_value).strip():
+                validation_errors.append(
+                    f"Section {section}: enter {field_name}."
+                )
+                return None
+
+            try:
+                numeric_value = float(str(raw_value).strip())
+            except ValueError:
+                validation_errors.append(
+                    f"Section {section}: {field_name} must be a number."
+                )
+                return None
+
+            if not numeric_value.is_integer():
+                validation_errors.append(
+                    f"Section {section}: {field_name} must be a whole number."
+                )
+                return None
+
+            integer_value = int(numeric_value)
+
+            if integer_value < minimum or integer_value > maximum:
+                validation_errors.append(
+                    f"Section {section}: {field_name} must be between "
+                    f"{minimum} and {maximum}."
+                )
+                return None
+
+            return integer_value
+
+
+        def required_number(raw_value, section, field_name):
+
+            if not str(raw_value).strip():
+                validation_errors.append(
+                    f"Section {section}: enter {field_name}."
+                )
+                return None
+
+            try:
+                return float(str(raw_value).strip().replace(",", ""))
+            except ValueError:
+                validation_errors.append(
+                    f"Section {section}: {field_name} must be numeric."
+                )
+                return None
+
+
+        if target is None:
+            validation_errors.append(
+                "Section 1: select an outcome variable."
             )
 
-            st.stop()
-
-
-        if min_depth > max_depth:
-
-            st.error(
-                "Minimum tree depth cannot be larger "
-                "than maximum tree depth."
+        if len(predictors) == 0:
+            validation_errors.append(
+                "Section 2: select at least one predictor variable."
             )
 
+        test_percent = required_integer(
+            test_percent_input,
+            3,
+            "the testing percentage",
+            1,
+            50
+        )
+
+        cv_folds = required_integer(
+            cv_folds_input,
+            3,
+            "the number of cross-validation folds",
+            2,
+            20
+        )
+
+        random_seed = required_integer(
+            random_seed_input,
+            3,
+            "the random seed",
+            0,
+            999999
+        )
+
+        min_depth = required_integer(
+            min_depth_input,
+            4,
+            "the minimum tree depth",
+            1,
+            30
+        )
+
+        max_depth = required_integer(
+            max_depth_input,
+            4,
+            "the maximum tree depth",
+            1,
+            30
+        )
+
+        min_samples_leaf = required_integer(
+            min_samples_leaf_input,
+            5,
+            "the minimum observations in a terminal leaf",
+            1,
+            999999
+        )
+
+        min_samples_split = required_integer(
+            min_samples_split_input,
+            5,
+            "the minimum observations required to split a node",
+            2,
+            999999
+        )
+
+        chosen_cutoff = required_number(
+            chosen_cutoff_input,
+            7,
+            "the classification cutoff"
+        )
+
+        if chosen_cutoff is not None and not 0 <= chosen_cutoff <= 1:
+            validation_errors.append(
+                "Section 7: the classification cutoff must be between 0 and 1."
+            )
+
+        if (
+            min_depth is not None
+            and max_depth is not None
+            and min_depth > max_depth
+        ):
+            validation_errors.append(
+                "Section 4: minimum tree depth cannot be larger than "
+                "maximum tree depth."
+            )
+
+        if metric_name == "Business Value":
+
+            baseline_actual_0 = required_number(
+                baseline_actual_0_input,
+                6,
+                "the baseline value for Actual 0"
+            )
+            baseline_actual_1 = required_number(
+                baseline_actual_1_input,
+                6,
+                "the baseline value for Actual 1"
+            )
+            tn_value = required_number(
+                tn_value_input,
+                6,
+                "the True Negative value"
+            )
+            fp_value = required_number(
+                fp_value_input,
+                6,
+                "the False Positive value"
+            )
+            fn_value = required_number(
+                fn_value_input,
+                6,
+                "the False Negative value"
+            )
+            tp_value = required_number(
+                tp_value_input,
+                6,
+                "the True Positive value"
+            )
+
+            if not validation_errors:
+                baseline_values = {
+                    0: baseline_actual_0,
+                    1: baseline_actual_1
+                }
+                business_values = {
+                    "TP": tp_value,
+                    "FP": fp_value,
+                    "FN": fn_value,
+                    "TN": tn_value
+                }
+
+        else:
+            baseline_values = None
+            business_values = {
+                "TP": 0.0,
+                "FP": 0.0,
+                "FN": 0.0,
+                "TN": 0.0
+            }
+
+        if validation_errors:
+            st.error(
+                "The model was not built. Please complete or correct the "
+                "following inputs:\n\n- "
+                + "\n- ".join(validation_errors)
+            )
             st.stop()
 
 
@@ -1810,10 +2090,6 @@ if uploaded_file is not None:
             baseline_values
         )
 
-        st.session_state.compare_with_baseline_saved = (
-            compare_with_baseline
-        )
-
         st.session_state.cv_folds_saved = int(cv_folds)
 
         st.session_state.random_seed_saved = int(random_seed)
@@ -1881,10 +2157,6 @@ if st.session_state.model_built:
 
     baseline_values = (
         st.session_state.baseline_values_saved
-    )
-
-    compare_with_baseline = (
-        st.session_state.compare_with_baseline_saved
     )
 
     cv_folds_saved = (
@@ -2185,7 +2457,7 @@ if st.session_state.model_built:
         if optimization_direction == "Minimize cost or loss":
 
             cv_result_label = (
-                "Out-of-Fold Cross-Validated Total Cost/Loss"
+                "Pooled Out-of-Fold Total Cost/Loss (Training Data)"
             )
 
             cv_average_label = (
@@ -2195,7 +2467,7 @@ if st.session_state.model_built:
         else:
 
             cv_result_label = (
-                "Out-of-Fold Cross-Validated Total Business Value"
+                "Pooled Out-of-Fold Total Business Value (Training Data)"
             )
 
             cv_average_label = (
@@ -2220,7 +2492,7 @@ if st.session_state.model_built:
         f"""
 At the selected cutoff of **{chosen_cutoff_saved:.2f}**,
 tree depth **{selected_depth}** was selected because it produced
-the **{selection_description} out-of-fold cross-validated {metric_name}**.
+the **{selection_description} pooled out-of-fold {metric_name} on the training data**.
 
 {cv_result_label}: **{format_metric_value(selected_cv_score, metric_name)}**
 {cv_average_line}
@@ -2228,10 +2500,15 @@ the **{selection_description} out-of-fold cross-validated {metric_name}**.
     )
 
     st.write(
-        "This result summarizes predictions made for training observations "
-        "while each observation was held out from fitting. It is a "
-        "model-selection result from the training data—not final testing-set "
-        "performance and not the average of the fold totals."
+        f"This total is the **sum across all {len(y_train):,} pooled "
+        "out-of-fold validation predictions**. In "
+        f"{cv_folds_saved}-fold cross-validation, the validation partitions "
+        "do not overlap and together cover the entire training set, so each "
+        "training observation contributes once while excluded from model "
+        "fitting. It is **not** the final testing-set result and it is "
+        "**not** the average of the fold totals. Final testing performance "
+        "appears later under Business Performance and Model Performance "
+        "Metrics."
     )
 
 
@@ -2522,79 +2799,21 @@ the **{selection_description} out-of-fold cross-validated {metric_name}**.
     )
 
 
-    cm_left_margin, cm_center, cm_right_margin = st.columns(
-        [1, 4, 1]
-    )
-
-
-    with cm_center:
-
-        cm_col1, cm_col2 = st.columns(
-            2,
-            gap="large"
+    st.markdown(
+        "<div class='cm-wrapper'>"
+        + confusion_matrix_html(
+            "Training Set",
+            y_train,
+            train_predictions
         )
-
-
-        with cm_col1:
-
-            st.markdown(
-                "<div style='text-align: center;'><strong>Training Set"
-                "</strong></div>",
-                unsafe_allow_html=True
-            )
-
-            st.table(
-                confusion_table(
-                    y_train,
-                    train_predictions
-                )
-                .style
-                .set_properties(
-                    **{"text-align": "center"}
-                )
-                .set_table_styles(
-                    [
-                        {
-                            "selector": "th",
-                            "props": [
-                                ("text-align", "center"),
-                                ("font-weight", "700")
-                            ]
-                        }
-                    ]
-                )
-            )
-
-
-        with cm_col2:
-
-            st.markdown(
-                "<div style='text-align: center;'><strong>Testing Set"
-                "</strong></div>",
-                unsafe_allow_html=True
-            )
-
-            st.table(
-                confusion_table(
-                    y_test,
-                    test_predictions
-                )
-                .style
-                .set_properties(
-                    **{"text-align": "center"}
-                )
-                .set_table_styles(
-                    [
-                        {
-                            "selector": "th",
-                            "props": [
-                                ("text-align", "center"),
-                                ("font-weight", "700")
-                            ]
-                        }
-                    ]
-                )
-            )
+        + confusion_matrix_html(
+            "Testing Set",
+            y_test,
+            test_predictions
+        )
+        + "</div>",
+        unsafe_allow_html=True
+    )
 
 
     if metric_name == "Business Value":
@@ -2619,7 +2838,7 @@ the **{selection_description} out-of-fold cross-validated {metric_name}**.
             "Business Performance"
         )
 
-        if compare_with_baseline and baseline_values is not None:
+        if baseline_values is not None:
 
             minimizing_business_cost = (
                 optimization_direction == "Minimize cost or loss"
@@ -2738,10 +2957,13 @@ the **{selection_description} out-of-fold cross-validated {metric_name}**.
                     "Model Business Value minus Baseline Business Value."
                 )
 
-            st.dataframe(
-                business_performance_df,
-                hide_index=True,
-                use_container_width=True
+            st.markdown(
+                business_performance_df.to_html(
+                    index=False,
+                    escape=True,
+                    classes="business-table"
+                ),
+                unsafe_allow_html=True
             )
 
             if (
@@ -2880,30 +3102,13 @@ the **{selection_description} out-of-fold cross-validated {metric_name}**.
     )
 
 
-    st.dataframe(
-        performance_df,
-        hide_index=True,
-        use_container_width=True,
-        height=(len(performance_df) + 1) * 68,
-        row_height=64,
-        column_config={
-            "Metric":
-                st.column_config.TextColumn(
-                    width=150
-                ),
-            "Training":
-                st.column_config.TextColumn(
-                    width=90
-                ),
-            "Testing":
-                st.column_config.TextColumn(
-                    width=90
-                ),
-            "Practical Interpretation":
-                st.column_config.TextColumn(
-                    width=760
-                )
-        }
+    st.markdown(
+        performance_df.to_html(
+            index=False,
+            escape=True,
+            classes="performance-table"
+        ),
+        unsafe_allow_html=True
     )
 
 
